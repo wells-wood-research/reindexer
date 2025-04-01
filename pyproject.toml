@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atomreindexer"
+version = "2025.0.0"
+dependencies = [
+    "pandas",
+    "pdbUtils",
+    "rdkit"
+]
+description = "Reindex atoms to match between input molecules."
+authors = [
+    {name = "Marta Chronowska", email = "mchrnwsk@gmail.com"}
+]
+maintainers = [
+    {name = "Marta Chronowska", email = "mchrnwsk@gmail.com"}
+]
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.7"
+license = {text = "GPLv3"}
+
+[project.urls]
+Source = "https://github.com/wells-wood-research/reindexer"
