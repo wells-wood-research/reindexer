@@ -5,7 +5,7 @@ import pandas as pd
 
 import argparse
 import os
-from typing import Optional
+from typing import Optional, List
 
 def is_same_smiles(molec1, molec2) -> bool:
     '''
@@ -29,7 +29,7 @@ def is_valid_path(file: str) -> bool:
     Arguments:
         file: absolute path to molecule structure file
     Returns:
-        (bool): True if file exists, False otherwise
+        bool: True if file exists, False otherwise
     '''
     exists = os.path.isfile(file)
     return exists
@@ -70,6 +70,7 @@ def get_file_format(file: str) -> Optional[str]:
             raise ValueError("Please provide a full file path with an extension (e.g., filename.pdb or filename.xyz).")
 
         # Define supported extensions (as lowercase for consistency)
+        global IMPLEMENTED_EXTENSIONS
         IMPLEMENTED_EXTENSIONS = {".pdb", ".xyz"}  # Using a set for faster lookup
         if extension not in IMPLEMENTED_EXTENSIONS:
             raise ValueError(f"Unsupported file extension '{extension}'. Allowed extensions: {sorted(IMPLEMENTED_EXTENSIONS)}")
@@ -81,7 +82,107 @@ def get_file_format(file: str) -> Optional[str]:
     except Exception as e:
         raise RuntimeError(f"Error processing file: {str(e)}") from e
 
-def main(molec1, molec2, suffix):
+class XYZFileFormatError(Exception):
+    """Exception raised for errors in the XYZ file format."""
+    pass
+
+def xyz2df(molec: str) -> pd.DataFrame:
+    """
+    Read .xyz file into a pandas dataframe.
+
+    Args:
+        molec (str): Absolute path to a molecule structure file.
+
+    Returns:
+        pd.DataFrame:   Dataframe describing the input structure with columns:
+                        ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
+
+    Raises:
+        TODO
+        FileNotFoundError: If the XYZ file does not exist.
+        XYZFileFormatError: If the XYZ file format is invalid (e.g., missing header lines).
+        RuntimeError: If there are issues reading the file or parsing data.
+
+    Example:
+        >>> xyz2df("/home/mchrnwsk/reindexer/src/tests/water.xyz")
+            ATOM  ATOM_ID ATOM_NAME RES_NAME CHAIN_ID  RES_ID      X       Y    Z  OCCUPANCY  BETAFACTOR ELEMENT
+        0  HETATM        1         O      UNK        A       1  0.000 -0.0589  0.0        1.0         0.0       O
+        1  HETATM        2         H      UNK        A       2 -0.811  0.4677  0.0        1.0         0.0       H
+        2  HETATM        3         H      UNK        A       3  0.811  0.4677  0.0        1.0         0.0       H
+    """
+    columns = ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
+    data: List[List] = []
+
+    try:
+        with open(molec, 'r') as xyz_file:
+            lines = xyz_file.readlines()
+
+            # Check that first two lines are for number of atoms and comment
+            if len(lines) < 2:
+                raise XYZFileFormatError("Please provide .xyz files with header lines: total number of atoms in line 1, and description in line 2.")
+
+            # First line should be the number of atoms
+            try:
+                num_atoms = int(lines[0].strip())
+            except ValueError:
+                raise XYZFileFormatError("First line of XYZ file must be an integer (number of atoms).")
+
+            # Verify that the number of remaining lines matches the number of atoms
+            atom_lines = lines[2:]  # Skip the first two header lines
+            if len(atom_lines) != num_atoms:
+                raise XYZFileFormatError(f"Expected {num_atoms} atoms, but found {len(atom_lines)} data lines.")
+
+            # Process atom data starting from line 3
+            for line_num, line in enumerate(atom_lines, start=3):  # Start numbering from 3
+                line = line.strip()
+                if not line:  # Skip empty lines
+                    continue
+
+                # Split the line into columns (assuming space-separated)
+                parts = line.split()
+                if len(parts) < 4:  # Ensure at least atom name, x, y, z are present
+                    raise XYZFileFormatError(f"Line {line_num} in XYZ file has insufficient columns. Expected at least 4 (atom, x, y, z).")
+
+                atom_name = parts[0].strip()  # First column: atom name or element
+                try:
+                    x = float(parts[1].strip())  # Second column: x coordinate
+                    y = float(parts[2].strip())  # Third column: y coordinate
+                    z = float(parts[3].strip())  # Fourth column: z coordinate
+                except (ValueError, IndexError) as e:
+                    raise XYZFileFormatError(f"Invalid coordinate data on line {line_num}: {str(e)}")
+
+                # Fill other columns as specified
+                atom_type = "HETATM"
+                res_name = "UNK"
+                chain_id = "A"
+                atom_id = line_num - 2  # Line number minus header lines (1-based for users)
+                res_id = line_num - 2   # Same as atom_id for simplicity
+                occupancy = 1.00
+                temp_factor = 0.00
+                element = atom_name  # Element is same as atom name
+
+                data.append([atom_type, atom_id, atom_name, res_name, chain_id, res_id, x, y, z, occupancy, temp_factor, element])
+
+        if not data:
+            raise XYZFileFormatError("No valid atom data found in XYZ file.")
+
+        return pd.DataFrame(data, columns=columns)
+
+    except FileNotFoundError:
+        raise FileNotFoundError(f"XYZ file not found: {molec}")
+    except Exception as e:
+        raise RuntimeError(f"Error reading XYZ file: {str(e)}") from e
+
+def load_molecule(molec):
+    extension = get_file_format(molec)
+    if extension == "pdb":
+        df = pdbUtils.pdb2df(molec)
+    else:
+        # Assume .xyz as checked at get_file_format level
+        df = xyz2df(molec)
+    return df
+
+def main(reference, referee, suffix, outFormat):
     """
     TODO
     Loads reference molecule (index maintained) and referee molecule (reindexed to match reference).
@@ -89,34 +190,39 @@ def main(molec1, molec2, suffix):
     If yes, then reindex using RDKit; otherwise perform manual reindexing. (TODO compare fragments?)
 
     Args:
-        file (str): Absolute path to a molecule structure file.
+        reference (str):       Absolute path to a reference molecule structure file.
+        referee (str):       Absolute path to a referee molecule structure file.
+        suffix (str):       Suffix to append to name of referee molecule when saving with reindexed atoms.
+        outFormat (str):    Structure file format to save output in, choices allowed from IMPLEMENTED_EXTENSIONS
 
     Returns:
+        TODO
         Optional[str]: Extension format of the input file without the leading dot,
                        or None if the format is not supported.
 
     Raises:
+        TODO
         TypeError: If the input is not a string.
         ValueError: If the file path is empty or has no extension.
 
     Example:
-        >>> get_file_format("/path/to/molecule.pdb")
-        'pdb'
+        >>> main("/path/to/molecule.xyz", "/path/to/molecule2.xyz", "_reindx", "pdb")
+        '/path/to/molecule2_reindx.pdb'
     """
-    
-    inputLigandDf = pdbUtils.pdb2df(molec1)
-    inputLigandMol = RDchem.MolFromPDBFile(molec1, removeHs=True)
-    inputLigandSmiles = RDchem.MolToSmiles(inputLigandMol, canonical=True)
+    molec1 = load_molecule(reference)
+    molec2 = load_molecule(referee)
 
-    outputLigandDf = pdbUtils.pdb2df(molec2)
-    outputLigandMol = RDchem.MolFromPDBFile(molec2, removeHs=True)
-    outputLigandSmiles = RDchem.MolToSmiles(outputLigandMol, canonical=True)
+###########################################################################
+    molec1Mol = RDchem.MolFromPDBFile(molec1, removeHs=True)
+    molec1Smiles = RDchem.MolToSmiles(molec1Mol, canonical=True)
+    molec2Mol = RDchem.MolFromPDBFile(molec2, removeHs=True)
+    molec2Smiles = RDchem.MolToSmiles(molec2Mol, canonical=True)
 
     # Check if SMILES agree
-    if inputLigandSmiles != outputLigandSmiles:
+    if molec1Smiles != molec2Smiles:
         raise ValueError(f"""[!ERROR!] Input and output SMILES are not the same.
-        input: {inputLigandSmiles}
-        output: {outputLigandSmiles}""")
+        input: {molec1Smiles}
+        output: {molec2Smiles}""")
     
     # Returns the indices of the molecule’s atoms that match a substructure query.
     matches = outputLigandMol.GetSubstructMatch(inputLigandMol)
@@ -149,12 +255,14 @@ if __name__ == "__main__":
     parser.add_argument("--reference", type=str, help="Path to structure file of a molecule whose atom indices are matched")
     parser.add_argument("--referee", type=str, help="Path to structure file of a molecule to be reordered")
     parser.add_argument("--suffix", type=str, default="_reord", help="Suffix to append to output with reindexed referee structure file")
+    parser.add_argument("--outFormat", type=str, choices = IMPLEMENTED_EXTENSIONS, default="xyz", help="Structure file format to save output in")
     args = parser.parse_args()
-    molec1 = args.reference
-    molec2 = args.referee
+    reference = args.reference
+    referee = args.referee
     suffix = args.suffix
+    outFormat = args.outFormat
 
     try:
-        main(molec1, molec2, suffix)
+        main(reference, referee, suffix, outFormat)
     except (ValueError, TypeError, RuntimeError) as e:
         print(f"Error: {e}")
