@@ -7,6 +7,8 @@ import argparse
 import os
 from typing import Optional, List
 
+from utils.errors import XYZFileFormatError, IsomerMismatchError
+
 def is_same_smiles(molec1, molec2) -> bool:
     '''
     TODO
@@ -15,12 +17,32 @@ def is_same_smiles(molec1, molec2) -> bool:
     '''
     return False
     
-def is_isomer(molec1, molec2) -> bool:
+def is_isomer(molec1: pd.DataFrame, molec2: pd.DataFrame) -> bool:
     '''
-    TODO
-    Check if molecules have the same number and types of atoms
+    Check if molecules have the same number and types of atoms.
+
+    Args:
+        molec1 (pd.DataFrame): Reference molecule.
+        molec2 (pd.DataFrame): Referee molecule.
+
+    Returns:
+        bool: True if the molecules are isomers (same number and types of atoms), False otherwise.
     '''
-    return False
+    try:
+        # Check if number of lines (rows) matches
+        if len(molec1) != len(molec2):
+            return False
+
+        # Check if number of occurrences of entries in ELEMENT is the same
+        # Get the element counts for both DataFrames
+        elements1 = molec1['ELEMENT'].value_counts().sort_index()
+        elements2 = molec2['ELEMENT'].value_counts().sort_index()
+
+        # Compare the series. They must be identical (same indices and values)
+        return elements1.equals(elements2)
+
+    except Exception as e:
+        raise ValueError(f"Error comparing molecules: {str(e)}") from e
 
 def is_valid_path(file: str) -> bool:
     '''
@@ -82,10 +104,6 @@ def get_file_format(file: str) -> Optional[str]:
     except Exception as e:
         raise RuntimeError(f"Error processing file: {str(e)}") from e
 
-class XYZFileFormatError(Exception):
-    """Exception raised for errors in the XYZ file format."""
-    pass
-
 def xyz2df(molec: str) -> pd.DataFrame:
     """
     Read .xyz file into a pandas dataframe.
@@ -98,7 +116,6 @@ def xyz2df(molec: str) -> pd.DataFrame:
                         ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
 
     Raises:
-        TODO
         FileNotFoundError: If the XYZ file does not exist.
         XYZFileFormatError: If the XYZ file format is invalid (e.g., missing header lines).
         RuntimeError: If there are issues reading the file or parsing data.
@@ -174,6 +191,16 @@ def xyz2df(molec: str) -> pd.DataFrame:
         raise RuntimeError(f"Error reading XYZ file: {str(e)}") from e
 
 def load_molecule(molec):
+    """
+    Read molecule structure file into a pandas dataframe, handing PDB and XYZ file formats.
+
+    Args:
+        molec (str): Absolute path to a molecule structure file.
+
+    Returns:
+        pd.DataFrame:   Dataframe describing the input structure with columns:
+                        ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
+    """
     extension = get_file_format(molec)
     if extension == "pdb":
         df = pdbUtils.pdb2df(molec)
@@ -211,6 +238,9 @@ def main(reference, referee, suffix, outFormat):
     """
     molec1 = load_molecule(reference)
     molec2 = load_molecule(referee)
+
+    if not is_isomer(molec1, molec2):
+        raise IsomerMismatchError(f"Reference and referee molecules are not isomers (do not contain same number and type of atoms) and cannot be matched.")
 
 ###########################################################################
     molec1Mol = RDchem.MolFromPDBFile(molec1, removeHs=True)
