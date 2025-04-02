@@ -190,7 +190,7 @@ def xyz2df(molec: str) -> pd.DataFrame:
     except Exception as e:
         raise RuntimeError(f"Error reading XYZ file: {str(e)}") from e
 
-def load_molecule(molec):
+def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol, str]:
     """
     Read molecule structure file into a pandas dataframe, handing PDB and XYZ file formats.
 
@@ -200,14 +200,19 @@ def load_molecule(molec):
     Returns:
         pd.DataFrame:   Dataframe describing the input structure with columns:
                         ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
+        RDchem.Mol:     RDKit molecule object constructred from the input structure file
+        str:            Canonical SMILES string for a molecule
     """
     extension = get_file_format(molec)
     if extension == "pdb":
         df = pdbUtils.pdb2df(molec)
+        mol = RDchem.rdmolfiles.MolFromPDBFile(molec)
     else:
         # Assume .xyz as checked at get_file_format level
         df = xyz2df(molec)
-    return df
+        mol = RDchem.rdmolfiles.MolFromXYZFile(molec)
+    smiles = RDchem.rdmolfiles.MolToSmiles(mol, canonical=True)
+    return df, mol, smiles
 
 def main(reference, referee, suffix, outFormat):
     """
@@ -236,48 +241,14 @@ def main(reference, referee, suffix, outFormat):
         >>> main("/path/to/molecule.xyz", "/path/to/molecule2.xyz", "_reindx", "pdb")
         '/path/to/molecule2_reindx.pdb'
     """
-    molec1 = load_molecule(reference)
-    molec2 = load_molecule(referee)
+    molec1, molec1Mol, molec1Smiles = load_molecule(reference)
+    molec2, molec2Mol, molec2Smiles = load_molecule(referee)
 
-    if not is_isomer(molec1, molec2):
-        raise IsomerMismatchError(f"Reference and referee molecules are not isomers (do not contain same number and type of atoms) and cannot be matched.")
+    print(f"molec1: {molec1}")
+    print("")
+    print(f"molec2: {molec2}")
 
-###########################################################################
-    molec1Mol = RDchem.MolFromPDBFile(molec1, removeHs=True)
-    molec1Smiles = RDchem.MolToSmiles(molec1Mol, canonical=True)
-    molec2Mol = RDchem.MolFromPDBFile(molec2, removeHs=True)
-    molec2Smiles = RDchem.MolToSmiles(molec2Mol, canonical=True)
-
-    # Check if SMILES agree
-    if molec1Smiles != molec2Smiles:
-        raise ValueError(f"""[!ERROR!] Input and output SMILES are not the same.
-        input: {molec1Smiles}
-        output: {molec2Smiles}""")
-    
-    # Returns the indices of the molecule’s atoms that match a substructure query.
-    matches = outputLigandMol.GetSubstructMatch(inputLigandMol)
-    
-    # Ensure the length of the match corresponds to the number of atoms
-    if len(matches) != inputLigandMol.GetNumAtoms():
-        raise ValueError("Atoms do not match between input and output.")
-    
-    indexMap = {inputIdx: outputIdx for inputIdx, outputIdx in enumerate(matches)}
-
-    # Reorder carbon atoms coordinates
-    reorderedLigandDf = inputLigandDf.copy(deep=True)
-    for inputIdx, outputIdx in indexMap.items():
-        reorderedLigandDf.loc[inputIdx, ["X", "Y", "Z"]] = outputLigandDf.loc[outputIdx, ["X", "Y", "Z"]].values
-
-    # Drop hydrogen rows from reorderedLigandDf and add from outputLigandDf
-    reorderedLigandDf = reorderedLigandDf[~reorderedLigandDf["ATOM_NAME"].str.startswith('H')]
-    hydrogenRows = outputLigandDf[outputLigandDf["ATOM_NAME"].str.startswith('H')]
-    reorderedLigandDf = pd.concat([reorderedLigandDf, hydrogenRows], ignore_index=True)
-
-    # Save the reordered ligand
-    outputFilename = molec2.split(".")[:-1][0]
-    reorderedLigandOutpath = f"{outputFilename}_reord.pdb"
-    pdbUtils.df2pdb(reorderedLigandDf, reorderedLigandOutpath)
-    return reorderedLigandOutpath
+    return '/path/to/molecule2_reindx.pdb'
 
 # Entry point for command-line execution
 if __name__ == "__main__": 
