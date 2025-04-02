@@ -7,6 +7,7 @@ from typing import Optional, List
 
 from rdkit import Chem as RDchem
 from rdkit.Chem import Draw
+from rdkit.Chem import rdDetermineBonds
 from rdkit.Chem import AllChem as RDchem
 from rdkit.Chem import rdFMCS
 
@@ -33,6 +34,7 @@ def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol, str]:
         # Assume .xyz as checked at get_file_format level
         df = xyz2df(molec)
         mol = RDchem.rdmolfiles.MolFromXYZFile(molec)
+        RDchem.rdDetermineBonds.DetermineBonds(mol,charge=0)
     mol.SetProp("name", name)
     smiles = RDchem.rdmolfiles.MolToSmiles(mol, canonical=True)
     return df, mol, smiles
@@ -358,21 +360,16 @@ def main(reference, referee, suffix, outFormat):
     """
     molec1, mol1, smiles1 = load_molecule(reference)
     molec2, mol2, smiles2 = load_molecule(referee)
+    # TODO Make outpath a class with base directory, image path, edited referee path
+    outpath = f"{os.path.join(os.path.dirname(referee), mol2.GetProp('name'))}{suffix}"
 
-    # 
     mcs_mol = get_maximum_common_substructure(mol1, mol2)
-
-    # Get tuples of integers: the indices of the molecule’s atoms that match a substructure query.
-    # The ordering of the indices corresponds to the atom ordering in the query.
-    # For example, the first index is for the atom in this molecule that matches the first atom in the query.
     match1 = mol1.GetSubstructMatch(mcs_mol)
     match2 = mol2.GetSubstructMatch(mcs_mol)
 
-    # TODO Make outpath a class with base directory, image path, edited referee path
-    outpath = f"{os.path.join(os.path.dirname(referee), mol2.GetProp('name'))}{suffix}"
     save_image_difference(mol1, match1, mol2, match2, mcs_mol, outpath)
 
-
+    # separate 
     return '/path/to/molecule2_reindx.pdb'
 
 # Entry point for command-line execution
