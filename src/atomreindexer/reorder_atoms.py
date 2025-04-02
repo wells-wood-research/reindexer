@@ -299,7 +299,7 @@ def label_atom_indices(mol: RDchem.Mol) -> None:
     for idx, atom in enumerate(mol.GetAtoms()):
         atom.SetAtomMapNum(idx)
 
-def highlight_atom_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol, match2: tuple[int], mcs_mol: RDchem.Mol) -> tuple[list, list]):
+def highlight_atom_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol, match2: tuple[int], mcs_mol: RDchem.Mol) -> tuple[list, list]:
     """
     Identify atoms in two molecules, which differ from their maximum common substructure.
 
@@ -319,10 +319,6 @@ def highlight_atom_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem
         tuple: A pair of lists (target_atm1, target_atm2) where:
             - target_atm1: List of atom indices in mol1 that do not match the MCS.
             - target_atm2: List of atom indices in mol2 that do not match the MCS.
-
-    Note:
-        The function uses GetSubstructMatch to ensure the MCS mapping is correctly 
-        applied to the referee molecule if not already provided.
     """
     target_atm1 = []
     for atom in mol1.GetAtoms():
