@@ -34,7 +34,7 @@ def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol, str]:
         # Assume .xyz as checked at get_file_format level
         df = xyz2df(molec)
         mol = RDchem.rdmolfiles.MolFromXYZFile(molec)
-        RDchem.rdDetermineBonds.DetermineBonds(mol,charge=0)
+        RDchem.rdDetermineBonds.DetermineBonds(mol,charge=0) # TODO Must allow user to input their charge
     mol.SetProp("name", name)
     smiles = RDchem.rdmolfiles.MolToSmiles(mol, canonical=True)
     return df, mol, smiles
