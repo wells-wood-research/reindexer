@@ -369,7 +369,7 @@ def main(reference, referee, suffix, outFormat):
 
     save_image_difference(mol1, match1, mol2, match2, mcs_mol, outpath)
 
-    # separate 
+    # TODO calculate charge and multiplicty with RDkit? 
     return '/path/to/molecule2_reindx.pdb'
 
 # Entry point for command-line execution
