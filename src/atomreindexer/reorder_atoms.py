@@ -135,14 +135,14 @@ def xyz2df(molec: str) -> pd.DataFrame:
 
             # First line should be the number of atoms
             try:
-                num_atoms = int(lines[0].strip())
+                noAtms = int(lines[0].strip())
             except ValueError:
                 raise XYZFileFormatError("First line of XYZ file must be an integer (number of atoms).")
 
             # Verify that the number of remaining lines matches the number of atoms
             atom_lines = lines[2:]  # Skip the first two header lines
-            if len(atom_lines) != num_atoms:
-                raise XYZFileFormatError(f"Expected {num_atoms} atoms, but found {len(atom_lines)} data lines.")
+            if len(atom_lines) != noAtms:
+                raise XYZFileFormatError(f"Expected {noAtms} atoms, but found {len(atom_lines)} data lines.")
 
             # Process atom data starting from line 3
             for line_num, line in enumerate(atom_lines, start=3):  # Start numbering from 3
@@ -185,6 +185,54 @@ def xyz2df(molec: str) -> pd.DataFrame:
     except Exception as e:
         raise RuntimeError(f"Error reading XYZ file: {str(e)}") from e
 
+def df2xyz(df: pd.DataFrame, filepath: str) -> None:
+    """
+    Save a pandas DataFrame containing atomic structure data into an XYZ file.
+
+    The first line contains the number of atoms (rows in the DataFrame), the second line is a comment line, and subsequent lines 
+    list the atom label (from the 'ELEMENT' column of the dataframe) and X, Y, Z coordinates, separated by tabs.
+
+    Args:
+        df (pd.DataFrame):  DataFrame describing the atomic structure with columns:
+                            ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 
+                            'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']. Must include at least 'ELEMENT', 'X', 'Y', 'Z'.
+        filepath (str):     Absolute path where the XYZ file will be saved, including the '.xyz' extension.
+
+    Raises:
+        KeyError: If required columns ('ELEMENT', 'X', 'Y', 'Z') are missing from the DataFrame.
+        IOError: If there is an issue writing to the specified file path.
+    """
+    # Check for required columns
+    colRequired = ['ELEMENT', 'X', 'Y', 'Z']
+    if not all(col in df.columns for col in colRequired):
+        raise KeyError(f"DataFrame is missing required columns: {colRequired}")
+
+    # Number of atoms is the number of rows in the DataFrame
+    noAtms = len(df)
+
+    # Prepare the header lines
+    header = f"{noAtms}\nSaved from a dataframe by https://github.com/wells-wood-research/reindexer.git\n"
+
+    # Format each row as "ELEMENT    X    Y    Z" with tab separation and fixed-width floating-point notation
+    atom_lines = []
+    for _, row in df.iterrows():
+        element = f"{row['ELEMENT']:<2}"  # Left-align element, fixed width of 2 (e.g., 'C ', 'N ')
+        x = f"{row['X']:>9.5f}"          # Right-align X, width of 9, 5 decimal places
+        y = f"{row['Y']:>9.5f}"          # Right-align Y, width of 9, 5 decimal places
+        z = f"{row['Z']:>9.5f}"          # Right-align Z, width of 9, 5 decimal places
+        line = f"{element}\t{x}\t{y}\t{z}"
+        atom_lines.append(line)
+
+    # Combine header and atom lines
+    xyz_content = header + "\n".join(atom_lines) + "\n"  # Add final newline for consistency
+
+    # Write to file
+    try:
+        with open(filepath, 'w') as xyz_file:
+            xyz_file.write(xyz_content)
+    except IOError as e:
+        raise IOError(f"Error writing to XYZ file at {filepath}: {str(e)}")
+
 #############################################################################################################
 
 def get_maximum_common_substructure(mol1: RDchem.Mol, mol2: RDchem.Mol) -> RDchem.Mol:
@@ -215,7 +263,7 @@ def get_maximum_common_substructure(mol1: RDchem.Mol, mol2: RDchem.Mol) -> RDche
 
 #############################################################################################################
 
-def save_image_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol, match2: tuple[int], mcs_mol: RDchem.Mol, outpath: str) -> None:
+def save_image_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol, match2: tuple[int], outpath: str) -> None:
     """
     Save an SVG image comparing two molecules, visually highlighting their differences.
 
@@ -236,7 +284,7 @@ def save_image_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol
     """
     label_atom_indices(mol1)
     label_atom_indices(mol2)
-    target_atm1, target_atm2 = highlight_atom_difference(mol1, match1, mol2, match2, mcs_mol)
+    diff1, diff2 = get_atom_difference(mol1, match1), get_atom_difference(mol2, match2)
 
     mols = [mol1, mol2]
     sub_width = 500
@@ -247,7 +295,7 @@ def save_image_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol
     img = RDchem.Draw.MolsToGridImage(mols = mols
                                       , subImgSize = (sub_width, sub_height)
                                       , legends = [f"reference: {mol1.GetProp('name')}", f"referee: {mol2.GetProp('name')}"]
-                                      , highlightAtomLists=[target_atm1, target_atm2]
+                                      , highlightAtomLists=[diff1, diff2]
                                       , useSVG = True
                                       )
     resized_img = edit_image_dimensions(img, svg_width, svg_height)
@@ -301,7 +349,7 @@ def label_atom_indices(mol: RDchem.Mol) -> None:
     for idx, atom in enumerate(mol.GetAtoms()):
         atom.SetAtomMapNum(idx)
 
-def highlight_atom_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol, match2: tuple[int], mcs_mol: RDchem.Mol) -> tuple[list, list]:
+def get_atom_difference(mol: RDchem.Mol, match: tuple[int]) -> list:
     """
     Identify atoms in two molecules, which differ from their maximum common substructure.
 
@@ -311,27 +359,154 @@ def highlight_atom_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem
     (e.g., in red) in visualizations.
 
     Args:
-        mol1 (RDchem.Mol):      reference molecule object
-        match1 (tuple[int]):    list of atom indices in mol1 that match the MCS
-        mol2 (RDchem.Mol):      referee molecule object
-        match2 (tuple[int]):    list of atom indices in mol2 that match the MCS
-        mcs_mol (RDchem.Mol):   maximum common substructure of mol1 and mol2
+        mol (RDchem.Mol):      molecule object
+        match (tuple[int]):    list of atom indices in mol that match the MCS
+    Returns:
+       (list):  List of atom indices in a mol that do not match MCS of mol and another mol.
+    """
+    diff = []
+    for atom in mol.GetAtoms():
+        if atom.GetIdx() not in match:
+            diff.append(atom.GetIdx())
+    return diff
+
+#############################################################################################################
+
+def split_df_by_H(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split a DataFrame describing molecular structure into two DataFrames: one for non-hydrogen atoms and one for hydrogen atoms.
+
+    The split is determined by checking the 'ELEMENT' column, hydrogen atoms ahave 'H' in 'ELEMENT'.
+
+    Args:
+        df (pd.DataFrame):  Dataframe describing the input structure with columns:
+                            ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
 
     Returns:
-        tuple: A pair of lists (target_atm1, target_atm2) where:
-            - target_atm1: List of atom indices in mol1 that do not match the MCS.
-            - target_atm2: List of atom indices in mol2 that do not match the MCS.
+        tuple[pd.DataFrame, pd.DataFrame]: A tuple containing two DataFrames:
+            - First DataFrame: Rows where the atom is not hydrogen ('ELEMENT' is not 'H').
+            - Second DataFrame: Rows where the atom is hydrogen ('ELEMENT' is 'H').
+
+    Warning:
+        If no rows contain hydrogen atoms (i.e., no rows where 'ATOM_NAME' or 'ELEMENT' is 'H'), a warning is printed 
+        indicating that no hydrogen atoms were found in the DataFrame. The second DataFrame in this case will be empty.
     """
-    target_atm1 = []
-    for atom in mol1.GetAtoms():
-        if atom.GetIdx() not in match1:
-            target_atm1.append(atom.GetIdx())
-    match2 = mol2.GetSubstructMatch(mcs_mol)
-    target_atm2 = []
-    for atom in mol2.GetAtoms():
-        if atom.GetIdx() not in match2:
-            target_atm2.append(atom.GetIdx())
-    return target_atm1, target_atm2
+    # Check if either ATOM_NAME or ELEMENT is 'H' to identify hydrogen atoms
+    isH = df['ELEMENT'].str.upper().eq('H')
+
+    # Split DataFrame
+    dfNotH = df[~isH].copy()  # Rows where atom is not hydrogen
+    dfH = df[isH].copy()       # Rows where atom is hydrogen
+
+    # Warn if no hydrogen atoms are found
+    if len(dfH) == 0:
+        print("Warning: No hydrogen atoms found in the DataFrame. Have you provided correct input structure, including hydrogens?")
+
+    return dfNotH, dfH
+
+def reindex(df1: pd.DataFrame, df2: pd.DataFrame, match1: tuple[int], match2: tuple[int], diff1: list, diff2: list) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Reindex two DataFrames to match indices between elements that are in common, and appending the unique elements at the end.
+    Indices of the reference (df1) are maintained, while referee (df2) is reindexed.
+
+    This function takes a reference DataFrame and a referee DataFrame, along with tuples of indices ('match1' and 
+    'match2') that indicate which indices correspond to common elements between the two. It reindexes the referee 
+    DataFrame to match the reference DataFrame's indices for common elements, keeps the reference DataFrame's indices 
+    unchanged, and appends any additional (uncommon) elements from both DataFrames at the end with new sequential indices.
+
+    Args:
+        df1 (pd.DataFrame):     The reference DataFrame whose indices should remain unchanged
+        df2 (pd.DataFrame):     The referee DataFrame to be reindexed to match the reference
+        match1 (tuple[int]):    Tuple of indices in df1 that correspond to common elements.
+        match2 (tuple[int]):    Tuple of indices in df2 that correspond to the same common elements as match1.
+        diff1 (list[int]):      List of indices of atoms unique to mol1 (do not match MCS of mol1 and mol2).
+        diff2 (list[int]):      List of indices of atoms unique to mol2 (do not match MCS of mol1 and mol2).
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]: A tuple containing:
+            - First DataFrame: The reference DataFrame with unchanged indices for common elements and its unique elements 
+                              appended at the end.
+            - Second DataFrame: The reindexed referee DataFrame where common elements match the reference indices, and 
+                               unique elements are appended at the end.
+
+    Note:
+        The function assumes that 'match1' and 'match2' are of the same length and correctly map common elements 
+        between the two DataFrames. If there are mismatches or inconsistencies, the results may be incorrect.
+    """
+    # Convert tuples to lists for easier manipulation
+    idx1common = list(match1)
+    idx2common = list(match2)
+    # Get all original indices from both DataFrames
+    idx1all = list(df1.index)
+    idx2all = list(df2.index)
+
+    # Create new DataFrames for output
+    df1new = df1.copy()
+    df2new = df2.copy()
+
+    # Reindex referee DataFrame for common elements
+    df1common = df1new.loc[idx1common].copy()
+    df2common = df2new.loc[idx2common].copy()
+
+    # Assign new indices to referee to match reference
+    df2common.index = idx1common
+
+    # Handle additional elements
+    # For reference, keep original indices but append at end
+    if diff1:
+        df1diff = df1new.loc[diff1].copy()
+        # Assign new sequential indices starting after the last common index
+        idxMaxCommon = max(idx1common) if idx1common else -1
+        idx1diff = range(idxMaxCommon + 1, idxMaxCommon + 1 + len(diff1))
+        df1diff.index = idx1diff
+
+        # Combine common and additional for reference
+        df1new = pd.concat([df1common, df1diff])
+    else:
+        df1new = df1common
+    # For referee, append additional elements with new sequential indices
+    if diff2:
+        df2diff = df2new.loc[diff2].copy()
+        # Assign new sequential indices starting after the last common index
+        idxMaxCommon = max(idx1common) if idx1common else -1
+        idx2diff = range(idxMaxCommon + 1 + len(diff1) if diff1 else idxMaxCommon + 1,
+                                      idxMaxCommon + 1 + len(diff1) + len(diff2))
+        df2diff.index = idx2diff
+
+        # Combine common and additional for referee
+        df2new = pd.concat([df2common, df2diff])
+    else:
+        df2new = df2common
+
+    # Ensure reference and referee have the same number of rows if no additional referee elements
+    #df1new, df2new = pad_to_match(df1new, df2new)
+
+    return df1new, df2new
+
+def pad_to_match(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Ensure both DataFrames have the same number of rows by padding the shorter one with empty rows.
+
+    Args:
+        df1 (pd.DataFrame): First DataFrame (e.g., reference).
+        df2 (pd.DataFrame): Second DataFrame (e.g., referee).
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]: A tuple of the two DataFrames, padded to have the same length.
+    """
+    if len(df1) != len(df2):
+        dfLonger = df1 if len(df1) > len(df2) else df2
+        dfShorter = df2 if len(df1) > len(df2) else df1
+        noRowsMissing = abs(len(df1) - len(df2))
+        idxPad = range(dfShorter.index[-1] + 1, dfShorter.index[-1] + 1 + noRowsMissing)
+        dfPad = pd.DataFrame(index=idxPad, columns=dfShorter.columns)
+        if len(df1) > len(df2):
+            df2pda = pd.concat([dfShorter, dfPad])
+            return df1, df2pda
+        else:
+            df1pad = pd.concat([dfShorter, dfPad])
+            return df1pad, df2
+    return df1, df2
 
 #############################################################################################################
 
@@ -358,18 +533,30 @@ def main(reference, referee, suffix, outFormat):
         TypeError: If the input is not a string.
         ValueError: If the file path is empty or has no extension.
     """
-    molec1, mol1, smiles1 = load_molecule(reference)
-    molec2, mol2, smiles2 = load_molecule(referee)
-    # TODO Make outpath a class with base directory, image path, edited referee path
-    outpath = f"{os.path.join(os.path.dirname(referee), mol2.GetProp('name'))}{suffix}"
+    df1, mol1, smiles1 = load_molecule(reference)
+    df2, mol2, smiles2 = load_molecule(referee)
 
     mcs_mol = get_maximum_common_substructure(mol1, mol2)
-    match1 = mol1.GetSubstructMatch(mcs_mol)
-    match2 = mol2.GetSubstructMatch(mcs_mol)
+    match1, match2 = mol1.GetSubstructMatch(mcs_mol), mol2.GetSubstructMatch(mcs_mol)
+    diff1, diff2 = get_atom_difference(mol1, match1), get_atom_difference(mol2, match2)
+    save_image_difference(mol1, match1, mol2, match2, "/home/mchrnwsk/reindexer/src/tests/image_preindexed")
 
-    save_image_difference(mol1, match1, mol2, match2, mcs_mol, outpath)
+    df1new, df2new = reindex(df1, df2, match1, match2, diff1, diff2)
 
-    # TODO calculate charge and multiplicty with RDkit? 
+    reference_reindexed = "/home/mchrnwsk/reindexer/src/tests/quindoline_reindex.xyz"
+    referee_reindexed = "/home/mchrnwsk/reindexer/src/tests/3_anilinoquinoline_reindex.xyz"
+
+    df2xyz(df1new, reference_reindexed)
+    df2xyz(df2new, referee_reindexed)
+
+    df1reidx, mol1reidx, smiles1reidx = load_molecule(reference_reindexed)
+    df2reidx, mol2reidx, smiles2reidx = load_molecule(referee_reindexed)
+
+    mcs_molreidx = get_maximum_common_substructure(mol1reidx, mol2reidx)
+    match1reidx, match2reidx = mol1reidx.GetSubstructMatch(mcs_molreidx), mol2reidx.GetSubstructMatch(mcs_molreidx)
+    save_image_difference(mol1reidx, match1reidx, mol2reidx, match2reidx, "/home/mchrnwsk/reindexer/src/tests/image_reindexed")
+
+    # TODO calculate charge and multiplicty with RDkit? https://www.rdkit.org/docs/source/rdkit.Chem.rdmolops.html#rdkit.Chem.rdmolops.GetFormalCharge
     return '/path/to/molecule2_reindx.pdb'
 
 # Entry point for command-line execution
