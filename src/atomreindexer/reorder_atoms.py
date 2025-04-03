@@ -10,10 +10,12 @@ from rdkit.Chem import Draw
 from rdkit.Chem import rdDetermineBonds
 from rdkit.Chem import AllChem as RDchem
 from rdkit.Chem import rdFMCS
+from rdkit.Chem import rdForceFieldHelpers as RDforceFields
+from rdkit.Chem import Descriptors
 
-from utils.errors import XYZFileFormatError, SubstructureNotFound
+from utils.errors import XYZFileFormatError, SubstructureNotFound, StructureNotOptimised
 
-def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol, str]:
+def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol]:
     """
     Read molecule structure file into a pandas dataframe, handing PDB and XYZ file formats.
 
@@ -24,7 +26,6 @@ def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol, str]:
         pd.DataFrame:   Dataframe describing the input structure with columns:
                         ['ATOM', 'ATOM_ID', 'ATOM_NAME', 'RES_NAME', 'CHAIN_ID', 'RES_ID', 'X', 'Y', 'Z', 'OCCUPANCY', 'BETAFACTOR', 'ELEMENT']
         RDchem.Mol:     RDKit molecule object constructred from the input structure file
-        str:            Canonical SMILES string for a molecule
     """
     name, extension = get_file_format(molec)
     if extension == "pdb":
@@ -36,8 +37,7 @@ def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol, str]:
         mol = RDchem.rdmolfiles.MolFromXYZFile(molec)
         RDchem.rdDetermineBonds.DetermineBonds(mol,charge=0) # TODO Must allow user to input their charge
     mol.SetProp("name", name)
-    smiles = RDchem.rdmolfiles.MolToSmiles(mol, canonical=True)
-    return df, mol, smiles
+    return df, mol, name
 
 def get_file_format(file: str) -> Optional[tuple[str, str]]:
     """
@@ -436,9 +436,6 @@ def reindex(df1: pd.DataFrame, df2: pd.DataFrame, match1: tuple[int], match2: tu
     # Convert tuples to lists for easier manipulation
     idx1common = list(match1)
     idx2common = list(match2)
-    # Get all original indices from both DataFrames
-    idx1all = list(df1.index)
-    idx2all = list(df2.index)
 
     # Create new DataFrames for output
     df1new = df1.copy()
@@ -495,7 +492,6 @@ def pad_to_match(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd
         tuple[pd.DataFrame, pd.DataFrame]: A tuple of the two DataFrames, padded to have the same length.
     """
     if len(df1) != len(df2):
-        dfLonger = df1 if len(df1) > len(df2) else df2
         dfShorter = df2 if len(df1) > len(df2) else df1
         noRowsMissing = abs(len(df1) - len(df2))
         idxPad = range(dfShorter.index[-1] + 1, dfShorter.index[-1] + 1 + noRowsMissing)
@@ -510,7 +506,7 @@ def pad_to_match(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd
 
 #############################################################################################################
 
-def main(reference, referee, suffix, outFormat):
+def main(reference: str, referee: str, outDir: str):
     """
     TODO
     Loads reference molecule (index maintained) and referee molecule (reindexed to match reference).
@@ -533,46 +529,64 @@ def main(reference, referee, suffix, outFormat):
         TypeError: If the input is not a string.
         ValueError: If the file path is empty or has no extension.
     """
-    df1, mol1, smiles1 = load_molecule(reference)
-    df2, mol2, smiles2 = load_molecule(referee)
+    os.makedirs(outDir, exist_ok=True)
 
+    # Load structure files into dataframe, molecule, name
+    (df1, mol1, name1), (df2, mol2, name2) = load_molecule(reference), load_molecule(referee)
+    # Get MCS, and indices of atoms matching it and unique to each molecule
     mcs_mol = get_maximum_common_substructure(mol1, mol2)
     match1, match2 = mol1.GetSubstructMatch(mcs_mol), mol2.GetSubstructMatch(mcs_mol)
     diff1, diff2 = get_atom_difference(mol1, match1), get_atom_difference(mol2, match2)
-    save_image_difference(mol1, match1, mol2, match2, "/home/mchrnwsk/reindexer/src/tests/image_preindexed")
+    # Save an image visualising original atom indices and which atoms are not common to the structures
+    save_image_difference(mol1, match1, mol2, match2, f"{outDir}/img_preindexed")
 
+    # Reindex the referee dataframe to match atom indices of reference
+    # Atoms unique to each molecule are moved to the end rows of the dataframe
     df1new, df2new = reindex(df1, df2, match1, match2, diff1, diff2)
+    # Save to xyz files
+    df2xyz(df1new, f"{os.path.join(outDir, name1+'_reidx.xyz')}")
+    df2xyz(df2new, f"{os.path.join(outDir, name2+'_reidx.xyz')}")
 
-    reference_reindexed = "/home/mchrnwsk/reindexer/src/tests/quindoline_reindex.xyz"
-    referee_reindexed = "/home/mchrnwsk/reindexer/src/tests/3_anilinoquinoline_reindex.xyz"
+    # Reload reindexed files to visualise the results of reindexing and optimise geometry (only mol needed)
+    (_, mol1reidx, _),  (_, mol2reidx, _) = load_molecule(f"{os.path.join(outDir, name1+'_reidx.xyz')}"), load_molecule(f"{os.path.join(outDir, name2+'_reidx.xyz')}")
 
-    df2xyz(df1new, reference_reindexed)
-    df2xyz(df2new, referee_reindexed)
-
-    df1reidx, mol1reidx, smiles1reidx = load_molecule(reference_reindexed)
-    df2reidx, mol2reidx, smiles2reidx = load_molecule(referee_reindexed)
-
+    # Optimise geometry
+    isConv1 = RDforceFields.UFFOptimizeMolecule(mol1reidx)
+    if isConv1 != 0:
+        raise StructureNotOptimised("Reindexed reference could not have been optimised.")
+    RDchem.MolToXYZFile(mol1reidx, f"{os.path.join(outDir, name1+'_reidx_opt.xyz')}")
+    isConv2 = RDforceFields.UFFOptimizeMolecule(mol2reidx)
+    if isConv2 != 0:
+        raise StructureNotOptimised("Reindexed referee could not have been optimised.")
+    RDchem.MolToXYZFile(mol2reidx, f"{os.path.join(outDir, name2+'_reidx_opt.xyz')}")
+    
+    # Get reindexed MCS, and indices of atoms matching it and unique to each molecule
     mcs_molreidx = get_maximum_common_substructure(mol1reidx, mol2reidx)
     match1reidx, match2reidx = mol1reidx.GetSubstructMatch(mcs_molreidx), mol2reidx.GetSubstructMatch(mcs_molreidx)
-    save_image_difference(mol1reidx, match1reidx, mol2reidx, match2reidx, "/home/mchrnwsk/reindexer/src/tests/image_reindexed")
-
-    # TODO calculate charge and multiplicty with RDkit? https://www.rdkit.org/docs/source/rdkit.Chem.rdmolops.html#rdkit.Chem.rdmolops.GetFormalCharge
-    return '/path/to/molecule2_reindx.pdb'
+    # Save an image visualising reindexed atom indices and which atoms are not common to the structures
+    save_image_difference(mol1reidx, match1reidx, mol2reidx, match2reidx, f"{outDir}/img_reindexed")
+    
+    # Provide hint on charge and multiplicty with RDkit
+    print(f"Reference molecule: {name1}")
+    print(f"    Number of unpaired electrons: {Descriptors.NumRadicalElectrons(mol1reidx)}")
+    print(f"    Formal chagre: {RDchem.rdmolops.GetFormalCharge(mol1reidx)}")
+    print(f"Referee molecule: {name2}")
+    print(f"    Number of unpaired electrons: {Descriptors.NumRadicalElectrons(mol2reidx)}")
+    print(f"    Formal chagre: {RDchem.rdmolops.GetFormalCharge(mol2reidx)}")
+    return None
 
 # Entry point for command-line execution
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a reindexed structure file of the referee to match atom indices and labels to reference input")
     parser.add_argument("--reference", type=str, help="Path to structure file of a molecule whose atom indices are matched")
     parser.add_argument("--referee", type=str, help="Path to structure file of a molecule to be reordered")
-    parser.add_argument("--suffix", type=str, default="_reord", help="Suffix to append to output with reindexed referee structure file")
-    parser.add_argument("--outFormat", type=str, choices = IMPLEMENTED_EXTENSIONS, default="xyz", help="Structure file format to save output in")
+    parser.add_argument("--outDir", type=str, help="Path to directory to which output will be saved")
     args = parser.parse_args()
     reference = args.reference
     referee = args.referee
-    suffix = args.suffix
-    outFormat = args.outFormat
+    outDir = args.outDir
 
     try:
-        main(reference, referee, suffix, outFormat)
+        main(reference, referee, outDir)
     except (ValueError, TypeError, RuntimeError) as e:
         print(f"Error: {e}")
