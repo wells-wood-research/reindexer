@@ -8,12 +8,12 @@ from typing import Optional, List
 from rdkit import Chem as RDchem
 from rdkit.Chem import Draw
 from rdkit.Chem import rdDetermineBonds
-from rdkit.Chem import AllChem as RDchem
 from rdkit.Chem import rdFMCS
 from rdkit.Chem import rdForceFieldHelpers as RDforceFields
 from rdkit.Chem import Descriptors
 
 from utils.errors import XYZFileFormatError, SubstructureNotFound, StructureNotOptimised
+from reindexer.pdb import reindex_pdb
 
 def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol]:
     """
@@ -35,7 +35,7 @@ def load_molecule(molec: str) -> tuple[pd.DataFrame, RDchem.Mol]:
         # Assume .xyz as checked at get_file_format level
         df = xyz2df(molec)
         mol = RDchem.rdmolfiles.MolFromXYZFile(molec)
-        RDchem.rdDetermineBonds.DetermineBonds(mol,charge=0) # TODO Must allow user to input their charge
+        rdDetermineBonds.DetermineBonds(mol, charge=0) # TODO Must allow user to input their charge
     mol.SetProp("name", name)
     return df, mol, name
 
@@ -292,7 +292,7 @@ def save_image_difference(mol1: RDchem.Mol, match1: tuple[int], mol2: RDchem.Mol
     sub_height = 500
     svg_height = sub_height
 
-    img = RDchem.Draw.MolsToGridImage(mols = mols
+    img = Draw.MolsToGridImage(mols = mols
                                       , subImgSize = (sub_width, sub_height)
                                       , legends = [f"reference: {mol1.GetProp('name')}", f"referee: {mol2.GetProp('name')}"]
                                       , highlightAtomLists=[diff1, diff2]
@@ -506,7 +506,7 @@ def pad_to_match(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd
 
 #############################################################################################################
 
-def main(reference: str, referee: str, outDir: str):
+def main(reference: str, referee: str, outDir: str, serial_policy: str = "reference"):
     """
     TODO
     Loads reference molecule (index maintained) and referee molecule (reindexed to match reference).
@@ -529,6 +529,20 @@ def main(reference: str, referee: str, outDir: str):
         TypeError: If the input is not a string.
         ValueError: If the file path is empty or has no extension.
     """
+    reference_extension = os.path.splitext(reference)[1].lower() if isinstance(reference, str) else ""
+    referee_extension = os.path.splitext(referee)[1].lower() if isinstance(referee, str) else ""
+    if reference_extension == ".pdb" and referee_extension == ".pdb":
+        output_path = os.path.join(
+            outDir,
+            f"{os.path.splitext(os.path.basename(referee))[0]}_reidx.pdb",
+        )
+        return reindex_pdb(
+            reference,
+            referee,
+            output_path,
+            serial_policy=serial_policy,
+        )
+
     os.makedirs(outDir, exist_ok=True)
 
     # Load structure files into dataframe, molecule, name
@@ -581,12 +595,18 @@ if __name__ == "__main__":
     parser.add_argument("--reference", type=str, help="Path to structure file of a molecule whose atom indices are matched")
     parser.add_argument("--referee", type=str, help="Path to structure file of a molecule to be reordered")
     parser.add_argument("--outDir", type=str, help="Path to directory to which output will be saved")
+    parser.add_argument(
+        "--serial-policy",
+        choices=("reference", "target"),
+        default="reference",
+        help="PDB output serial-number policy (default: reference)",
+    )
     args = parser.parse_args()
     reference = args.reference
     referee = args.referee
     outDir = args.outDir
 
     try:
-        main(reference, referee, outDir)
-    except (ValueError, TypeError, RuntimeError) as e:
+        main(reference, referee, outDir, serial_policy=args.serial_policy)
+    except (OSError, ValueError, TypeError, RuntimeError) as e:
         print(f"Error: {e}")

@@ -23,3 +23,13 @@ license = {text = "GPLv3"}
 
 [project.urls]
 Source = "https://github.com/wells-wood-research/reindexer"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["reindex"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
