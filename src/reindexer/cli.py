@@ -20,16 +20,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the reference structure whose atom order is canonical.",
     )
     parser.add_argument(
-        "--referee",
         "--target",
         dest="target",
         required=True,
         help="Path to the target structure to reorder.",
     )
     parser.add_argument(
-        "--outDir",
-        required=True,
-        help="Directory to which output files will be written.",
+        "--output",
+        "-o",
+        default=None,
+        help=(
+            "Output PDB path. Defaults to a sibling of the target named "
+            "<target-stem>_reindexed.pdb."
+        ),
     )
     parser.add_argument(
         "--serial-policy",
@@ -50,10 +53,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         reindex_main(
             args.reference,
             args.target,
-            args.outDir,
+            args.output,
             serial_policy=args.serial_policy,
         )
-    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+    except (ImportError, OSError, ValueError, TypeError, RuntimeError) as exc:
         print(f"Error: {exc}")
         return 1
     return 0
