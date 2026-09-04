@@ -23,3 +23,15 @@ class AmbiguousAtomMappingError(ChemicalMappingError):
 
 class HydrogenReconciliationError(ChemicalMappingError):
     """Reference hydrogenation cannot be applied to the target coordinates."""
+
+
+class XYZFileFormatError(Exception):
+    """An XYZ file does not conform to the supported format."""
+
+
+class SubstructureNotFound(Exception):
+    """RDKit could not complete the requested common-substructure search."""
+
+
+class StructureNotOptimised(Exception):
+    """RDKit force-field optimization did not converge."""

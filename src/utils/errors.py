@@ -1,10 +1,16 @@
-class XYZFileFormatError(Exception):
-    """Exception raised for errors in the XYZ file format."""
-    pass
+"""Compatibility imports for the pre-package exception path.
 
-class SubstructureNotFound(Exception):
-    """Exception raised when RDKit's findMCS (maximum common substructure) calculation failed to finish."""
-    pass
+New code should import exceptions from :mod:`reindexer.errors`.
+"""
 
-class StructureNotOptimised(Exception):
-    """Structure optimisation with rdkit.Chem.rdForceFieldHelpers.UFFOptimizeMolecule did not converge"""
+from reindexer.errors import (
+    StructureNotOptimised,
+    SubstructureNotFound,
+    XYZFileFormatError,
+)
+
+__all__ = [
+    "StructureNotOptimised",
+    "SubstructureNotFound",
+    "XYZFileFormatError",
+]

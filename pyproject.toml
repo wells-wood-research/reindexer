@@ -24,6 +24,9 @@ license = {text = "GPLv3"}
 [project.urls]
 Source = "https://github.com/wells-wood-research/reindexer"
 
+[project.scripts]
+reindexer = "reindexer.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest"]
 

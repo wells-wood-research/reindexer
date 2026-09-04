@@ -29,12 +29,15 @@ result = reindex_pdb(
 )
 ```
 
-The same operation is available through the existing CLI:
+The same operation is available through the installed CLI:
 
 ```bash
-python src/reindex.py --reference reference.pdb --referee target.pdb \
+reindexer --reference reference.pdb --target target.pdb \
   --outDir output --serial-policy target
 ```
+
+The legacy `--referee` spelling and `python src/reindex.py` entry point remain
+available for compatibility. `python -m reindexer` is also supported.
 
 The reference supplies atom names, residue identity, elements, charges,
 connectivity, and hydrogenation. Existing target atoms retain their target

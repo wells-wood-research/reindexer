@@ -6,7 +6,10 @@ from .errors import (
     HydrogenReconciliationError,
     PDBError,
     PDBFormatError,
+    StructureNotOptimised,
+    SubstructureNotFound,
     UnsupportedPDBFeatureError,
+    XYZFileFormatError,
 )
 from .pdb import PDBAtom, PDBDocument, ReindexResult, parse_pdb, reindex_pdb
 
@@ -19,7 +22,10 @@ __all__ = [
     "PDBError",
     "PDBFormatError",
     "ReindexResult",
+    "StructureNotOptimised",
+    "SubstructureNotFound",
     "UnsupportedPDBFeatureError",
+    "XYZFileFormatError",
     "parse_pdb",
     "reindex_pdb",
 ]
