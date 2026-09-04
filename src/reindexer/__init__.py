@@ -11,7 +11,14 @@ from .errors import (
     UnsupportedPDBFeatureError,
     XYZFileFormatError,
 )
-from .pdb import PDBAtom, PDBDocument, ReindexResult, parse_pdb, reindex_pdb
+from .pdb import (
+    PDBAtom,
+    PDBDocument,
+    ReindexResult,
+    default_output_path,
+    parse_pdb,
+    reindex_pdb,
+)
 
 __all__ = [
     "AmbiguousAtomMappingError",
@@ -26,6 +33,7 @@ __all__ = [
     "SubstructureNotFound",
     "UnsupportedPDBFeatureError",
     "XYZFileFormatError",
+    "default_output_path",
     "parse_pdb",
     "reindex_pdb",
 ]
