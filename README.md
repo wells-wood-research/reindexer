@@ -24,7 +24,7 @@ from reindexer import reindex_pdb
 result = reindex_pdb(
     "reference.pdb",
     "target.pdb",
-    "target_reindexed.pdb",
+    # Omitting output writes target_reindexed.pdb beside target.pdb.
     serial_policy="reference",  # or "target"
 )
 ```
@@ -33,11 +33,11 @@ The same operation is available through the installed CLI:
 
 ```bash
 reindexer --reference reference.pdb --target target.pdb \
-  --outDir output --serial-policy target
+  --serial-policy target
 ```
 
-The legacy `--referee` spelling and `python src/reindex.py` entry point remain
-available for compatibility. `python -m reindexer` is also supported.
+Use `--output custom/path.pdb` or `-o custom/path.pdb` to choose an explicit
+destination. `python -m reindexer` is also supported.
 
 The reference supplies atom names, residue identity, elements, charges,
 connectivity, and hydrogenation. Existing target atoms retain their target
