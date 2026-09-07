@@ -1,39 +1,20 @@
-"""Public API for the reindexer package."""
+"""Graph-based molecular protonation and reindexing to match reference molecule.
 
-from .errors import (
-    AmbiguousAtomMappingError,
-    ChemicalMappingError,
-    HydrogenReconciliationError,
-    PDBError,
-    PDBFormatError,
-    StructureNotOptimised,
-    SubstructureNotFound,
-    UnsupportedPDBFeatureError,
-    XYZFileFormatError,
-)
-from .pdb import (
-    PDBAtom,
-    PDBDocument,
-    ReindexResult,
-    default_output_path,
-    parse_pdb,
-    reindex_pdb,
-)
+Supports xyz and pdb file formats.
+
+The reindexing is based on the graph isomorphism between the reference molecule and the target molecule, which is used to relabel the atoms in the target molecule to match the reference molecule.
+
+The reindexing can be performed with or without hydrogen optimisation. The hydrogen optimisation is performed using ORCA (optH - all heavy atoms frozen).
+"""
+
+from .pipeline import reindex, reindex_graphs
+from .result import HydrogenPlacement, ReindexResult
+
+__version__ = "0.1.0"
 
 __all__ = [
-    "AmbiguousAtomMappingError",
-    "ChemicalMappingError",
-    "HydrogenReconciliationError",
-    "PDBAtom",
-    "PDBDocument",
-    "PDBError",
-    "PDBFormatError",
+    "HydrogenPlacement",
     "ReindexResult",
-    "StructureNotOptimised",
-    "SubstructureNotFound",
-    "UnsupportedPDBFeatureError",
-    "XYZFileFormatError",
-    "default_output_path",
-    "parse_pdb",
-    "reindex_pdb",
+    "reindex",
+    "reindex_graphs",
 ]

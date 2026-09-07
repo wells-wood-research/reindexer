@@ -1,38 +1,34 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reindexer"
-version = "2025.0.0"
-dependencies = [
-    "pandas",
-    "pdbUtils",
-    "rdkit"
-]
-description = "Reindex atoms to match between input molecules."
+name = "molecular-reindexer"
+version = "0.1.0"
+description = "Reference-order molecular reindexing with hydrogen reconstruction"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPLv3"}
 authors = [
     {name = "Marta Chronowska", email = "mchrnwsk@gmail.com"}
 ]
 maintainers = [
     {name = "Marta Chronowska", email = "mchrnwsk@gmail.com"}
 ]
-readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.7"
-license = {text = "GPLv3"}
+dependencies = [
+    "networkx>=3.0",
+    "numpy>=1.24",
+    "pandas>=1.5",
+]
 
 [project.urls]
 Source = "https://github.com/wells-wood-research/reindexer"
 
-[project.scripts]
-reindexer = "reindexer.cli:main"
-
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest>=7"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["reindex"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,6 +1,2 @@
-src/tests/*
-src/reindexer.egg-info/
-src/reindexer/__pycache__/
-src/utils/__pycache__/
-src/quinoline/
-.vscode
+__pycache__/
+*.egg-info/
