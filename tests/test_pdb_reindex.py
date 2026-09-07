@@ -3,7 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from reindexer import PDBFormatError, UnsupportedPDBFeatureError, parse_pdb, reindex_pdb
+from reindexer import (
+    PDBFormatError,
+    UnsupportedPDBFeatureError,
+    default_output_path,
+    parse_pdb,
+    reindex_pdb,
+)
 
 
 def atom_line(serial, name, element, x, y, z, residue="LIG", chain="A", residue_id=1):
@@ -33,6 +39,12 @@ def water_pdb(order, coordinates, serials):
 
 
 class PDBParserTests(unittest.TestCase):
+    def test_default_output_path_is_a_target_sibling(self):
+        self.assertEqual(
+            default_output_path("structures/target.pdb"),
+            Path("structures/target_reindexed.pdb"),
+        )
+
     def test_parser_retains_atom_fields_and_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.pdb"

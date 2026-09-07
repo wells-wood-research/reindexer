@@ -2,16 +2,15 @@ from pdbUtils import pdbUtils  # type: ignore[import-not-found]
 import pandas as pd  # type: ignore[import-untyped]
 import os
 import re
+from pathlib import Path
 from typing import List
 
 from rdkit import Chem as RDchem  # type: ignore[import-not-found]
 from rdkit.Chem import Draw  # type: ignore[import-not-found]
 from rdkit.Chem import rdDetermineBonds  # type: ignore[import-not-found]
 from rdkit.Chem import rdFMCS  # type: ignore[import-not-found]
-from rdkit.Chem import rdForceFieldHelpers as RDforceFields  # type: ignore[import-not-found]
-from rdkit.Chem import Descriptors  # type: ignore[import-not-found]
 
-from .errors import XYZFileFormatError, SubstructureNotFound, StructureNotOptimised
+from .errors import XYZFileFormatError, SubstructureNotFound
 from .pdb import reindex_pdb
 
 IMPLEMENTED_EXTENSIONS = {".pdb", ".xyz"}
@@ -506,85 +505,48 @@ def pad_to_match(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd
 
 #############################################################################################################
 
-def main(reference: str, referee: str, outDir: str, serial_policy: str = "reference"):
+def main(
+    reference: str | Path,
+    target: str | Path,
+    output: str | Path | None = None,
+    serial_policy: str = "reference",
+):
+    """Reindex a target PDB and write one output PDB file.
+
+    If ``output`` is omitted, the result is written beside the target using
+    the ``<target-stem>_reindexed.pdb`` naming convention.
     """
-    TODO
-    Loads reference molecule (index maintained) and referee molecule (reindexed to match reference).
-    Check if molecules are isomers of each other (otherwise raise RuntimeError), and if they have same SMILES strings.
-    If yes, then reindex using RDKit; otherwise perform manual reindexing. (TODO compare fragments?)
 
-    Args:
-        reference (str):       Absolute path to a reference molecule structure file.
-        referee (str):       Absolute path to a referee molecule structure file.
-        suffix (str):       Suffix to append to name of referee molecule when saving with reindexed atoms.
-        outFormat (str):    Structure file format to save output in, choices allowed from IMPLEMENTED_EXTENSIONS
+    reference_path = Path(reference)
+    target_path = Path(target)
+    if reference_path.suffix.lower() != ".pdb" or target_path.suffix.lower() != ".pdb":
+        raise ValueError("The command interface currently accepts two PDB files.")
+    return reindex_pdb(reference_path, target_path, output, serial_policy=serial_policy)
 
-    Returns:
-        TODO
-        Optional[str]: Extension format of the input file without the leading dot,
-                       or None if the format is not supported.
+if __name__ == "__main__":
+    import argparse
 
-    Raises:
-        TODO
-        TypeError: If the input is not a string.
-        ValueError: If the file path is empty or has no extension.
-    """
-    reference_extension = os.path.splitext(reference)[1].lower() if isinstance(reference, str) else ""
-    referee_extension = os.path.splitext(referee)[1].lower() if isinstance(referee, str) else ""
-    if reference_extension == ".pdb" and referee_extension == ".pdb":
-        output_path = os.path.join(
-            outDir,
-            f"{os.path.splitext(os.path.basename(referee))[0]}_reidx.pdb",
-        )
-        return reindex_pdb(
-            reference,
-            referee,
-            output_path,
-            serial_policy=serial_policy,
-        )
+    parser = argparse.ArgumentParser(
+        description="Reindex a target PDB file to match a reference PDB file."
+    )
+    parser.add_argument("reference", type=str, default="/home/mchrnwsk/reindexer/src/test_files/plmate.pdb", help="Path to the reference PDB file.")
+    parser.add_argument("target", type=str, default="/home/mchrnwsk/reindexer/src/test_files/b2_plm.pdb", help="Path to the target PDB file.")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Output path for the reindexed PDB file. If omitted, the result is written beside the target.",
+    )
+    parser.add_argument(
+        "-s",
+        "--serial-policy",
+        type=str,
+        choices=["reference", "target"],
+        default="reference",
+        help="Policy for serial numbering: 'reference' to follow the reference PDB, 'target' to follow the target PDB.",
+    )
 
-    os.makedirs(outDir, exist_ok=True)
+    args = parser.parse_args()
 
-    # Load structure files into dataframe, molecule, name
-    (df1, mol1, name1), (df2, mol2, name2) = load_molecule(reference), load_molecule(referee)
-    # Get MCS, and indices of atoms matching it and unique to each molecule
-    mcs_mol = get_maximum_common_substructure(mol1, mol2)
-    match1, match2 = mol1.GetSubstructMatch(mcs_mol), mol2.GetSubstructMatch(mcs_mol)
-    diff1, diff2 = get_atom_difference(mol1, match1), get_atom_difference(mol2, match2)
-    # Save an image visualising original atom indices and which atoms are not common to the structures
-    save_image_difference(mol1, match1, mol2, match2, f"{outDir}/img_preindexed")
-
-    # Reindex the referee dataframe to match atom indices of reference
-    # Atoms unique to each molecule are moved to the end rows of the dataframe
-    df1new, df2new = reindex(df1, df2, match1, match2, diff1, diff2)
-    # Save to xyz files
-    df2xyz(df1new, f"{os.path.join(outDir, name1+'_reidx.xyz')}")
-    df2xyz(df2new, f"{os.path.join(outDir, name2+'_reidx.xyz')}")
-
-    # Reload reindexed files to visualise the results of reindexing and optimise geometry (only mol needed)
-    (_, mol1reidx, _),  (_, mol2reidx, _) = load_molecule(f"{os.path.join(outDir, name1+'_reidx.xyz')}"), load_molecule(f"{os.path.join(outDir, name2+'_reidx.xyz')}")
-
-    # Optimise geometry
-    isConv1 = RDforceFields.UFFOptimizeMolecule(mol1reidx)
-    if isConv1 != 0:
-        raise StructureNotOptimised("Reindexed reference could not have been optimised.")
-    RDchem.MolToXYZFile(mol1reidx, f"{os.path.join(outDir, name1+'_reidx_opt.xyz')}")
-    isConv2 = RDforceFields.UFFOptimizeMolecule(mol2reidx)
-    if isConv2 != 0:
-        raise StructureNotOptimised("Reindexed referee could not have been optimised.")
-    RDchem.MolToXYZFile(mol2reidx, f"{os.path.join(outDir, name2+'_reidx_opt.xyz')}")
-    
-    # Get reindexed MCS, and indices of atoms matching it and unique to each molecule
-    mcs_molreidx = get_maximum_common_substructure(mol1reidx, mol2reidx)
-    match1reidx, match2reidx = mol1reidx.GetSubstructMatch(mcs_molreidx), mol2reidx.GetSubstructMatch(mcs_molreidx)
-    # Save an image visualising reindexed atom indices and which atoms are not common to the structures
-    save_image_difference(mol1reidx, match1reidx, mol2reidx, match2reidx, f"{outDir}/img_reindexed")
-    
-    # Provide hint on charge and multiplicty with RDkit
-    print(f"Reference molecule: {name1}")
-    print(f"    Number of unpaired electrons: {Descriptors.NumRadicalElectrons(mol1reidx)}")
-    print(f"    Formal chagre: {RDchem.rdmolops.GetFormalCharge(mol1reidx)}")
-    print(f"Referee molecule: {name2}")
-    print(f"    Number of unpaired electrons: {Descriptors.NumRadicalElectrons(mol2reidx)}")
-    print(f"    Formal chagre: {RDchem.rdmolops.GetFormalCharge(mol2reidx)}")
-    return None
+    main(args.reference, args.target, args.output, serial_policy=args.serial_policy)

@@ -87,6 +87,13 @@ class ReindexResult:
     removed_target_hydrogens: Tuple[int, ...]
 
 
+def default_output_path(target: str | Path) -> Path:
+    """Return the default sibling output path for a target PDB."""
+
+    target_path = Path(target)
+    return target_path.with_name(f"{target_path.stem}_reindexed{target_path.suffix}")
+
+
 def _field(line: str, start: int, end: int) -> str:
     return line[start:end] if len(line) >= start else ""
 
@@ -267,15 +274,29 @@ def _heavy_molecule(molecule):
     return heavy
 
 
-def _neutral_query(molecule):
+def _connectivity_view(molecule):
+    """Return an RDKit view that matches atom adjacency, not bond order.
+
+    PDB ``CONECT`` records often do not preserve double/aromatic bond order,
+    and different hydrogenation states can make RDKit perceive those orders
+    differently.  Mapping should therefore use element identity and graph
+    connectivity only.  The original reference molecule remains untouched and
+    is used later for canonical output connectivity and hydrogenation.
+    """
+
     Chem, _ = _rdkit_modules()
-    query = Chem.Mol(molecule)
-    for atom in query.GetAtoms():
-        # Mapping is intentionally independent of input hydrogenation and charge.
+    view = Chem.Mol(molecule)
+    for atom in view.GetAtoms():
+        # Mapping is intentionally independent of hydrogenation, charge, and
+        # aromaticity. Those properties are supplied by the reference later.
         atom.SetFormalCharge(0)
         atom.SetNumExplicitHs(0)
         atom.SetNoImplicit(True)
-    return query
+        atom.SetIsAromatic(False)
+    for bond in view.GetBonds():
+        bond.SetBondType(Chem.BondType.SINGLE)
+        bond.SetIsAromatic(False)
+    return view
 
 
 def _record_for_serial(document: PDBDocument, serial: int) -> PDBAtom:
@@ -326,8 +347,8 @@ def _map_heavy_atoms(reference: PDBDocument, target: PDBDocument, reference_mol,
             "Only hydrogen count differences can be reconciled automatically."
         )
 
-    query = _neutral_query(reference_heavy)
-    search = _neutral_query(target_heavy)
+    query = _connectivity_view(reference_heavy)
+    search = _connectivity_view(target_heavy)
     matches = search.GetSubstructMatches(
         query,
         uniquify=False,
@@ -547,7 +568,7 @@ def _conect_lines(reference_mol, serial_by_reference_serial: Mapping[int, int]) 
 def reindex_pdb(
     reference: str | Path,
     target: str | Path,
-    output: str | Path,
+    output: str | Path | None = None,
     *,
     serial_policy: str = "reference",
 ) -> ReindexResult:
@@ -560,6 +581,8 @@ def reindex_pdb(
     missing hydrogens receive new serials under the target policy.
     """
 
+    if Path(reference).suffix.lower() != ".pdb" or Path(target).suffix.lower() != ".pdb":
+        raise ValueError("reindex_pdb requires a reference PDB and a target PDB.")
     if serial_policy not in SERIAL_POLICIES:
         raise ValueError(
             f"serial_policy must be one of {sorted(SERIAL_POLICIES)}, got {serial_policy!r}."
@@ -608,7 +631,7 @@ def reindex_pdb(
             used_target_serials.add(next_serial)
             next_serial += 1
 
-    output_path = Path(output)
+    output_path = Path(output) if output is not None else default_output_path(target)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_lines: List[str] = list(target_document.metadata_lines)
     output_lines.append("REMARK Reindexed using reference atom identity and connectivity")
