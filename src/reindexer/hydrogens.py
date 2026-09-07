@@ -37,7 +37,7 @@ def analyse_hydrogens(
     target: nx.Graph,
     result: ReindexResult,
 ) -> ReindexResult:
-    """Count and assign target hydrogens using reference connectivity."""
+    """Assign target hydrogens to reference slots and omit surplus atoms."""
     expected: dict[int, int] = {target_node: 0 for target_node in result.target_to_reference}
     reference_slots: dict[int, int | None] = {}
     reference_hydrogens_by_parent: dict[int, list[int]] = {}
@@ -88,11 +88,14 @@ def analyse_hydrogens(
         "multiply_attached_target_hydrogens": multiply_attached,
         "excess_hydrogens": excess,
     }
-    if unattached or multiply_attached or excess:
+    if unattached or multiply_attached:
         raise HydrogenMappingError(diagnostics)
 
     target_to_reference_hydrogen: dict[int, int] = {}
     hydrogen_ambiguities: list[dict[str, Any]] = []
+    retained_target_hydrogens_by_parent: dict[int, list[int]] = {
+        target_parent: [] for target_parent in expected
+    }
     for target_parent, reference_slots_for_parent in reference_hydrogens_by_parent.items():
         target_hydrogens = list(target_hydrogens_by_parent.get(target_parent, []))
         remaining_reference = list(reference_slots_for_parent)
@@ -141,12 +144,26 @@ def analyse_hydrogens(
                     "reason": "chemically equivalent hydrogen slots assigned deterministically",
                 }
             )
-        for ref_h, target_h in zip(remaining_reference, remaining_target):
+        retained_remaining_target = remaining_target[: len(remaining_reference)]
+        for ref_h, target_h in zip(remaining_reference, retained_remaining_target):
             reference_slots[ref_h] = target_h
             target_to_reference_hydrogen[target_h] = ref_h
+        retained_target_hydrogens_by_parent[target_parent] = sorted(
+            target_to_reference_hydrogen.keys()
+            & set(target_hydrogens_by_parent.get(target_parent, []))
+        )
+
+    retained_target_hydrogens = set(target_to_reference_hydrogen)
+    omitted_target_hydrogens = sorted(
+        target_hydrogen
+        for target_hydrogens in target_hydrogens_by_parent.values()
+        for target_hydrogen in target_hydrogens
+        if target_hydrogen not in retained_target_hydrogens
+    )
 
     missing = {
-        target_parent: expected[target_parent] - len(target_hydrogens_by_parent.get(target_parent, []))
+        target_parent: expected[target_parent]
+        - len(retained_target_hydrogens_by_parent.get(target_parent, []))
         for target_parent in expected
     }
     validation = dict(result.validation)
@@ -154,8 +171,10 @@ def analyse_hydrogens(
         {
             "reference_hydrogen_count": sum(expected.values()),
             "target_hydrogen_count": sum(
-                len(nodes) for nodes in target_hydrogens_by_parent.values()
+                len(nodes) for nodes in retained_target_hydrogens_by_parent.values()
             ),
+            "omitted_target_hydrogen_count": len(omitted_target_hydrogens),
+            "omitted_target_hydrogens": omitted_target_hydrogens,
             "expected_hydrogens_match_reference": True,
             "hydrogen_slots_complete": all(
                 target_h is not None for target_h in reference_slots.values()
@@ -168,7 +187,7 @@ def analyse_hydrogens(
         result,
         missing_hydrogens=missing,
         existing_hydrogens={
-            parent: list(target_hydrogens_by_parent.get(parent, []))
+            parent: list(retained_target_hydrogens_by_parent.get(parent, []))
             for parent in expected
         },
         expected_hydrogens=expected,
