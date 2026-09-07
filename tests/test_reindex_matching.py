@@ -1,9 +1,9 @@
 import pandas as pd
 import pytest
 
-from reindex.graph import df2graph
-from reindex.matching import GraphMismatchError, MappingAmbiguityError
-from reindex.pipeline import reindex_graphs
+from reindexer.graph import df2graph
+from reindexer.matching import GraphMismatchError, MappingAmbiguityError
+from reindexer.pipeline import reindex_graphs
 
 
 def _graph(rows):

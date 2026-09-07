@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from reindex.graph import df2graph
+from reindexer.graph import df2graph
 
 
 def test_df2graph_builds_connectivity_and_retains_metadata():

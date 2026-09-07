@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from reindex.io import df2pdb, pdb2df
+from reindexer.io import df2pdb, pdb2df
 
 
 def test_pdb_round_trip_preserves_atom_identity_and_coordinates(tmp_path):

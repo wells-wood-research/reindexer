@@ -19,25 +19,14 @@ The package can reorder a target PDB according to a reference PDB while
 preserving target coordinates, occupancy, and B-factors:
 
 ```python
-from reindexer import reindex_pdb
+from reindexer import reindex
 
-result = reindex_pdb(
+result = reindex(
     "reference.pdb",
     "target.pdb",
-    # Omitting output writes target_reindexed.pdb beside target.pdb.
-    serial_policy="reference",  # or "target"
+    "target_reindexed.pdb",
 )
 ```
-
-The same operation is available through the installed CLI:
-
-```bash
-reindexer --reference reference.pdb --target target.pdb \
-  --serial-policy target
-```
-
-Use `--output custom/path.pdb` or `-o custom/path.pdb` to choose an explicit
-destination. `python -m reindexer` is also supported.
 
 The reference supplies atom names, residue identity, elements, charges,
 connectivity, and hydrogenation. Existing target atoms retain their target

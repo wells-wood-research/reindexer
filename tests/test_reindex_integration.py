@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from reindex.graph import pdb2graph
-from reindex.pipeline import reindex_graphs
+from reindexer.graph import pdb2graph
+from reindexer.pipeline import reindex_graphs
 
 
 FIXTURES = Path(__file__).parent / "fixture_files"

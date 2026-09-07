@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from reindex.io import pdb2df
-from reindex.labelling import label_xyz_with_reference
-from reindex.orca import write_hydrogen_opt
-from reindex.pipeline import reindex
+from reindexer.io import pdb2df
+from reindexer.labelling import label_xyz_with_reference
+from reindexer.orca import write_hydrogen_opt
+from reindexer.pipeline import reindex
 
 
 FIXTURES = Path(__file__).parent / "fixture_files"
@@ -72,7 +72,7 @@ def test_reindex_optimise_branch_uses_mock_orca_and_relabels_output(tmp_path, mo
         )
         return 0
 
-    monkeypatch.setattr("reindex.optimization.orca.run_orca", mock_run_orca)
+    monkeypatch.setattr("reindexer.optimization.orca.run_orca", mock_run_orca)
 
     result = reindex(
         reference_path,

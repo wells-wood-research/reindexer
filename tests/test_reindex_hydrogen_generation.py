@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from reindex.graph import df2graph, pdb2graph
-from reindex.hydrogens import HYDROGEN_BOND_LENGTHS, generate_missing_hydrogens
-from reindex.pipeline import reindex_graphs
+from reindexer.graph import df2graph, pdb2graph
+from reindexer.hydrogens import HYDROGEN_BOND_LENGTHS, generate_missing_hydrogens
+from reindexer.pipeline import reindex_graphs
 
 
 def _tetrahedral_methyl_rows():

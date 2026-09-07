@@ -3,11 +3,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from reindex.graph import pdb2graph
-from reindex.hydrogens import generate_missing_hydrogens
-from reindex.io import pdb2df
-from reindex.pipeline import reindex_graphs
-from reindex.writer import (
+from reindexer.graph import pdb2graph
+from reindexer.hydrogens import generate_missing_hydrogens
+from reindexer.io import pdb2df
+from reindexer.pipeline import reindex_graphs
+from reindexer.writer import (
     PDBWriteError,
     build_reindexed_pdb_dataframe,
     write_reindexed_pdb,
