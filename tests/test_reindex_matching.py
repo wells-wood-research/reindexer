@@ -78,3 +78,24 @@ def test_incompatible_heavy_graph_fails_with_histograms():
     diagnostics = exc_info.value.diagnostics
     assert diagnostics["reference"]["element_histogram"] == {"C": 1, "O": 1}
     assert diagnostics["target"]["element_histogram"] == {"C": 1, "N": 1}
+
+
+def test_subgraph_mode_maps_reference_fragment_in_target_superset():
+    reference = _graph(
+        [
+            {"ELEMENT": "C", "X": 0.0, "Y": 0.0, "Z": 0.0},
+            {"ELEMENT": "O", "X": 1.3, "Y": 0.0, "Z": 0.0},
+        ]
+    )
+    target = _graph(
+        [
+            {"ELEMENT": "N", "X": -1.3, "Y": 0.0, "Z": 0.0},
+            {"ELEMENT": "C", "X": 0.0, "Y": 0.0, "Z": 0.0},
+            {"ELEMENT": "O", "X": 1.3, "Y": 0.0, "Z": 0.0},
+        ]
+    )
+
+    result = reindex_graphs(reference, target, allow_subgraph=True)
+
+    assert result.target_to_reference == {1: 0, 2: 1}
+    assert result.reference_to_target == {0: 1, 1: 2}

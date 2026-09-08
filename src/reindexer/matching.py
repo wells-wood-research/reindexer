@@ -165,23 +165,28 @@ def _kabsch_rmsd(target: nx.Graph, reference: nx.Graph, mapping: dict[int, int])
     return float(np.sqrt(np.mean(np.sum((aligned - reference_centered) ** 2, axis=1))))
 
 
-def match_heavy_atoms(reference: nx.Graph, target: nx.Graph) -> MappingOutcome:
-    """Exhaustively match heavy graphs and resolve residual symmetry."""
+def match_heavy_atoms(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: bool = False) -> MappingOutcome:
+    """Match reference to target, optionally allowing target-only atoms."""
     reference = add_connectivity_signatures(reference)
     target = add_connectivity_signatures(target)
     diagnostics = _graph_diagnostics(reference, target)
-    if (
+    if diagnostics["target"]["node_count"] < diagnostics["reference"]["node_count"]:
+        raise GraphMismatchError(diagnostics)
+    if not allow_subgraph and (
         diagnostics["reference"]["node_count"] != diagnostics["target"]["node_count"]
         or not diagnostics["element_histogram_match"]
         or not diagnostics["degree_distribution_match"]
     ):
         raise GraphMismatchError(diagnostics)
 
-    node_match = nx.algorithms.isomorphism.categorical_node_match(
-        "connectivity_signature", None
-    )
-    matcher = nx.algorithms.isomorphism.GraphMatcher(target, reference, node_match=node_match)
-    candidates = [dict(mapping) for mapping in matcher.isomorphisms_iter()]
+    if allow_subgraph and reference.number_of_nodes() < target.number_of_nodes():
+        node_match = nx.algorithms.isomorphism.categorical_node_match("element", None)
+        matcher = nx.algorithms.isomorphism.GraphMatcher(target, reference, node_match=node_match)
+        candidates = [dict(mapping) for mapping in matcher.subgraph_isomorphisms_iter()]
+    else:
+        node_match = nx.algorithms.isomorphism.categorical_node_match("connectivity_signature", None)
+        matcher = nx.algorithms.isomorphism.GraphMatcher(target, reference, node_match=node_match)
+        candidates = [dict(mapping) for mapping in matcher.isomorphisms_iter()]
     candidates.sort(key=lambda mapping: tuple(mapping[node] for node in sorted(mapping)))
     diagnostics["isomorphism_candidate_count"] = len(candidates)
     if not candidates:
@@ -192,19 +197,19 @@ def match_heavy_atoms(reference: nx.Graph, target: nx.Graph) -> MappingOutcome:
         "connectivity_signature_survivors": len(candidates),
     }
     candidates, best_bond = _retain_best(
-        candidates, lambda mapping: _bond_distance_score(target, reference, mapping)
+        candidates, lambda mapping: _bond_distance_score(target.subgraph(mapping), reference, mapping)
     )
     scores["bond_distance_best"] = best_bond
     scores["bond_distance_survivors"] = len(candidates)
 
     candidates, best_angle = _retain_best(
-        candidates, lambda mapping: _angle_score(target, reference, mapping)
+        candidates, lambda mapping: _angle_score(target.subgraph(mapping), reference, mapping)
     )
     scores["local_geometry_best"] = best_angle
     scores["local_geometry_survivors"] = len(candidates)
 
     candidates, best_rmsd = _retain_best(
-        candidates, lambda mapping: _kabsch_rmsd(target, reference, mapping)
+        candidates, lambda mapping: _kabsch_rmsd(target.subgraph(mapping), reference, mapping)
     )
     scores["global_rmsd_best"] = best_rmsd
     scores["global_rmsd_survivors"] = len(candidates)

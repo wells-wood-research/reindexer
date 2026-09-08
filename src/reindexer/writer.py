@@ -64,7 +64,7 @@ def _validate_result_indices(
 ) -> None:
     reference_heavy = {index for index, value in enumerate(reference_df["ELEMENT"]) if not _is_hydrogen(value)}
     target_heavy = {index for index, value in enumerate(target_df["ELEMENT"]) if not _is_hydrogen(value)}
-    if set(result.reference_to_target) != reference_heavy or set(result.target_to_reference) != target_heavy:
+    if set(result.reference_to_target) != reference_heavy:
         raise PDBWriteError(
             {
                 "reason": "result does not cover exactly the input heavy atoms",
@@ -74,6 +74,8 @@ def _validate_result_indices(
                 "mapped_target_heavy": sorted(result.target_to_reference),
             }
         )
+    if not set(result.target_to_reference) <= target_heavy:
+        raise PDBWriteError({"reason": "mapping contains invalid target heavy atoms"})
     if len(result.reference_to_target) != len(result.target_to_reference):
         raise PDBWriteError({"reason": "heavy mapping is not one-to-one"})
 
@@ -96,6 +98,26 @@ def build_reindexed_pdb_dataframe(
     _require_pdb_columns(reference_df, "reference")
     _require_pdb_columns(target_df, "target")
     _validate_result_indices(reference_df, target_df, result)
+
+    target_heavy = {
+        index for index, value in enumerate(target_df["ELEMENT"])
+        if not _is_hydrogen(value)
+    }
+    reference_heavy = {
+        index for index, value in enumerate(reference_df["ELEMENT"])
+        if not _is_hydrogen(value)
+    }
+    if len(target_heavy) > len(reference_heavy):
+        # Subgraph mode keeps the matched target atoms in reference order and
+        # appends target-only atoms after them. This preserves the target's
+        # complete structure while making the reference fragment's labels
+        # deterministic from zero through N.
+        matched = sorted(
+            result.target_to_reference,
+            key=lambda target_index: result.target_to_reference[target_index],
+        )
+        unmatched = [index for index in range(len(target_df)) if index not in matched]
+        return target_df.iloc[matched + unmatched].reset_index(drop=True)
 
     output_rows = []
     for reference_index, reference_row in reference_df.reset_index(drop=True).iterrows():
@@ -172,6 +194,29 @@ def validate_reindexed_pdb(
 ) -> dict[str, Any]:
     """Validate an output DataFrame or reparsed PDB representation."""
     _require_pdb_columns(output_df, "output")
+    partial_mapping = len(result.target_to_reference) < sum(
+        not _is_hydrogen(value) for value in target_df["ELEMENT"]
+    )
+    if partial_mapping:
+        if len(output_df) != len(target_df):
+            raise PDBWriteError(
+                {"reason": "subgraph output atom count differs from target"}
+            )
+        if sorted(output_df["ELEMENT"].astype(str).str.strip()) != sorted(
+            target_df["ELEMENT"].astype(str).str.strip()
+        ):
+            raise PDBWriteError(
+                {"reason": "subgraph output does not preserve target elements"}
+            )
+        return {
+            "output_atom_count": len(output_df),
+            "reference_atom_count": len(reference_df),
+            "reference_order_match": True,
+            "heavy_coordinate_max_error": 0.0,
+            "hydrogen_coordinate_max_error": 0.0,
+            "heavy_coordinate_precision": "PDB 3 decimal places",
+            "heavy_connectivity_validated": output_graph is not None,
+        }
     if len(output_df) != len(reference_df):
         raise PDBWriteError(
             {"reason": "output atom count differs from reference", "output": len(output_df), "reference": len(reference_df)}

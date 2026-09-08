@@ -16,11 +16,11 @@ from .result import ReindexResult
 from .writer import write_reindexed_pdb
 
 
-def reindex_graphs(reference: nx.Graph, target: nx.Graph) -> ReindexResult:
+def reindex_graphs(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: bool = False) -> ReindexResult:
     """Match two molecular graphs and analyse target hydrogen completeness."""
     reference_heavy = heavy_atom_graph(reference)
     target_heavy = heavy_atom_graph(target)
-    outcome = match_heavy_atoms(reference_heavy, target_heavy)
+    outcome = match_heavy_atoms(reference_heavy, target_heavy, allow_subgraph=allow_subgraph)
     target_to_reference = dict(outcome.mapping)
     reference_to_target = {reference_node: target_node for target_node, reference_node in target_to_reference.items()}
     result = ReindexResult(
@@ -63,6 +63,7 @@ def reindex(
     multiplicity: int | None = None,
     timeout: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
+    allow_subgraph: bool = False,
 ) -> ReindexResult:
     """Run graph reindexing, hydrogen generation, and optional ORCA optimization."""
     reference_path = Path(reference_path)
@@ -81,7 +82,7 @@ def reindex(
 
     reference_graph = pdb2graph(reference_path, tol_bond=tol_bond, logger=logger)
     target_graph = pdb2graph(target_path, tol_bond=tol_bond, logger=logger)
-    result = reindex_graphs(reference_graph, target_graph)
+    result = reindex_graphs(reference_graph, target_graph, allow_subgraph=allow_subgraph)
     result = generate_missing_hydrogens(reference_graph, target_graph, result)
     write_reindexed_pdb(
         reference_df,
