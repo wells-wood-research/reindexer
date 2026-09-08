@@ -16,6 +16,29 @@ from .result import ReindexResult
 from .writer import write_reindexed_pdb
 
 
+def _hydrogen_analysis_target(target: nx.Graph, mapped_nodes: set[int]) -> nx.Graph:
+    """Return the target graph whose connectivity is valid for H placement."""
+    mapped_heavy = {
+        node for node in mapped_nodes
+        if target.nodes[node].get("element") != "H"
+    }
+    if not mapped_heavy:
+        return target
+    retained = set(mapped_heavy)
+    retained.update(
+        node
+        for node, data in target.nodes(data=True)
+        if data.get("element") == "H"
+        and any(neighbor in mapped_heavy for neighbor in target.neighbors(node))
+        and all(
+            target.nodes[neighbor].get("element") == "H"
+            or neighbor in mapped_heavy
+            for neighbor in target.neighbors(node)
+        )
+    )
+    return target.subgraph(retained).copy()
+
+
 def reindex_graphs(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: bool = False) -> ReindexResult:
     """Match two molecular graphs and analyse target hydrogen completeness."""
     reference_heavy = heavy_atom_graph(reference)
@@ -29,18 +52,7 @@ def reindex_graphs(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: boo
         # atoms bonded to a side-chain fragment's CB atom. Retain hydrogens
         # attached only to retained heavy atoms so existing H coordinates can
         # still be reused.
-        mapped_nodes = set(target_to_reference)
-        mapped_nodes.update(
-            node
-            for node, data in target.nodes(data=True)
-            if data.get("element") == "H"
-            and all(
-                target.nodes[neighbor].get("element") == "H"
-                or neighbor in mapped_nodes
-                for neighbor in target.neighbors(node)
-            )
-        )
-        analysis_target = target.subgraph(mapped_nodes).copy()
+        analysis_target = _hydrogen_analysis_target(target, set(target_to_reference))
     result = ReindexResult(
         target_to_reference=target_to_reference,
         reference_to_target=reference_to_target,
@@ -101,7 +113,12 @@ def reindex(
     reference_graph = pdb2graph(reference_path, tol_bond=tol_bond, logger=logger)
     target_graph = pdb2graph(target_path, tol_bond=tol_bond, logger=logger)
     result = reindex_graphs(reference_graph, target_graph, allow_subgraph=allow_subgraph)
-    result = generate_missing_hydrogens(reference_graph, target_graph, result)
+    hydrogen_target = (
+        _hydrogen_analysis_target(target_graph, set(result.target_to_reference))
+        if allow_subgraph
+        else target_graph
+    )
+    result = generate_missing_hydrogens(reference_graph, hydrogen_target, result)
     write_reindexed_pdb(
         reference_df,
         target_df,

@@ -472,12 +472,51 @@ def generate_missing_hydrogens(
         )
         element = target.nodes[target_parent]["element"]
         total_hydrogens = result.expected_hydrogens[target_parent]
-        geometry, directions = _directions_for_atom(
-            element,
-            parent_coords,
-            neighbor_coords,
-            total_hydrogens,
-        )
+        try:
+            geometry, directions = _directions_for_atom(
+                element,
+                parent_coords,
+                neighbor_coords,
+                total_hydrogens,
+            )
+        except HydrogenGenerationError as exc:
+            details = dict(getattr(exc, "diagnostics", {}) or {})
+            details.update(
+                {
+                    "target_parent": target_parent,
+                    "target_parent_atom": dict(target.nodes[target_parent]),
+                    "reference_parent": next(
+                        (
+                            reference_node
+                            for reference_node, target_node
+                            in result.reference_to_target.items()
+                            if target_node == target_parent
+                        ),
+                        None,
+                    ),
+                    "target_heavy_neighbors": [
+                        {
+                            "index": neighbor,
+                            "element": target.nodes[neighbor].get("element"),
+                            "atom_name": target.nodes[neighbor].get("atom_name"),
+                            "original_index": target.nodes[neighbor].get("original_index"),
+                        }
+                        for neighbor in heavy_neighbors
+                    ],
+                    "target_graph_nodes": [
+                        {
+                            "index": node,
+                            "element": data.get("element"),
+                            "atom_name": data.get("atom_name"),
+                            "original_index": data.get("original_index"),
+                        }
+                        for node, data in target.nodes(data=True)
+                    ],
+                    "target_to_reference_mapping": dict(result.target_to_reference),
+                    "reference_to_target_mapping": dict(result.reference_to_target),
+                }
+            )
+            raise HydrogenGenerationError(details) from exc
         bond_length = HYDROGEN_BOND_LENGTHS.get(element, 1.00)
         diagnostics["geometry_by_parent"][target_parent] = geometry
 
