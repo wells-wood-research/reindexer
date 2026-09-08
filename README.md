@@ -62,8 +62,9 @@ automatically. The function returns a `ReindexResult` after writing the PDB.
 Matching is strict by default. Set `allow_subgraph=True` when the reference is
 an atom fragment that may be contained in a larger target structure, such as an
 amino-acid side chain extracted from a protein model. The target must contain
-at least as many heavy atoms as the reference; target-only heavy atoms are
-placed after the matched reference atoms in the output.
+at least as many heavy atoms as the reference; target-only atoms are removed
+from the reduced target graph and output before hydrogen generation and ORCA
+optimization.
 
 `reindex_graphs(reference, target, allow_subgraph=False)` is also exported. It accepts NetworkX
 graphs produced by `reindexer.graph` and performs heavy-atom matching plus
@@ -80,8 +81,8 @@ The full `reindex` pipeline is:
 3. Remove hydrogens and match the heavy-atom graphs.
 4. Assign existing target hydrogens to reference hydrogen slots.
 5. Generate coordinates for missing reference hydrogens.
-6. Build and validate a reference-ordered PDB, or, in subgraph mode, a PDB
-   with matched target atoms first and target-only atoms appended.
+6. Build and validate a reference-ordered PDB. In subgraph mode, target-only
+   atoms have already been removed from the reduced target graph.
 7. Optionally optimize hydrogen coordinates with ORCA.
 
 Heavy-atom mappings are one-to-one and use zero-based internal graph indices.
@@ -111,11 +112,10 @@ records must be well formed.
 
 In strict mode, output rows are exactly the reference rows and remain in
 reference order. Reference atom names, residue fields, element fields,
-serials, occupancy, and B-factors are retained. In subgraph mode, matched
-target atoms are ordered according to their reference atom indices and
-unmatched target atoms are appended after them. Heavy-atom coordinates and
-coordinates of retained target hydrogens come from the target. PDB output
-coordinates are serialized to three decimal places.
+serials, occupancy, and B-factors are retained. In subgraph mode, the output
+contains only the reference fragment and its matched target coordinates, so
+atoms outside the matched subgraph cannot affect hydrogen placement or ORCA
+optimization. PDB output coordinates are serialized to three decimal places.
 
 Target hydrogens that are not needed to fill reference hydrogen slots are
 omitted from the output. If a target parent has fewer hydrogens than its
@@ -149,8 +149,9 @@ these exceptions.
 With `allow_subgraph=True`, the reference heavy graph must be no larger than
 the target heavy graph. Subgraph matching finds candidate mappings using
 element identity, then the bond-distance, local-angle, and aligned RMSD
-tie-breakers are applied to the matched subgraph. Missing reference atoms and
-ambiguous matches still raise errors.
+tie-breakers are applied to the matched subgraph. The reduced target graph
+retains only matched heavy atoms and hydrogens attached to them. Missing
+reference atoms and ambiguous matches still raise errors.
 
 ## Hydrogen Generation
 

@@ -99,26 +99,6 @@ def build_reindexed_pdb_dataframe(
     _require_pdb_columns(target_df, "target")
     _validate_result_indices(reference_df, target_df, result)
 
-    target_heavy = {
-        index for index, value in enumerate(target_df["ELEMENT"])
-        if not _is_hydrogen(value)
-    }
-    reference_heavy = {
-        index for index, value in enumerate(reference_df["ELEMENT"])
-        if not _is_hydrogen(value)
-    }
-    if len(target_heavy) > len(reference_heavy):
-        # Subgraph mode keeps the matched target atoms in reference order and
-        # appends target-only atoms after them. This preserves the target's
-        # complete structure while making the reference fragment's labels
-        # deterministic from zero through N.
-        matched = sorted(
-            result.target_to_reference,
-            key=lambda target_index: result.target_to_reference[target_index],
-        )
-        unmatched = [index for index in range(len(target_df)) if index not in matched]
-        return target_df.iloc[matched + unmatched].reset_index(drop=True)
-
     output_rows = []
     for reference_index, reference_row in reference_df.reset_index(drop=True).iterrows():
         row = reference_row.copy()
@@ -198,15 +178,15 @@ def validate_reindexed_pdb(
         not _is_hydrogen(value) for value in target_df["ELEMENT"]
     )
     if partial_mapping:
-        if len(output_df) != len(target_df):
+        if len(output_df) != len(reference_df):
             raise PDBWriteError(
-                {"reason": "subgraph output atom count differs from target"}
+                {"reason": "subgraph output atom count differs from reference"}
             )
-        if sorted(output_df["ELEMENT"].astype(str).str.strip()) != sorted(
-            target_df["ELEMENT"].astype(str).str.strip()
+        if list(output_df["ELEMENT"].astype(str).str.strip()) != list(
+            reference_df["ELEMENT"].astype(str).str.strip()
         ):
             raise PDBWriteError(
-                {"reason": "subgraph output does not preserve target elements"}
+                {"reason": "subgraph output does not preserve reference elements"}
             )
         return {
             "output_atom_count": len(output_df),

@@ -23,6 +23,24 @@ def reindex_graphs(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: boo
     outcome = match_heavy_atoms(reference_heavy, target_heavy, allow_subgraph=allow_subgraph)
     target_to_reference = dict(outcome.mapping)
     reference_to_target = {reference_node: target_node for target_node, reference_node in target_to_reference.items()}
+    analysis_target = target
+    if allow_subgraph and len(target_to_reference) < target_heavy.number_of_nodes():
+        # Exclude target-only heavy atoms from hydrogen geometry, e.g. backbone
+        # atoms bonded to a side-chain fragment's CB atom. Retain hydrogens
+        # attached only to retained heavy atoms so existing H coordinates can
+        # still be reused.
+        mapped_nodes = set(target_to_reference)
+        mapped_nodes.update(
+            node
+            for node, data in target.nodes(data=True)
+            if data.get("element") == "H"
+            and all(
+                target.nodes[neighbor].get("element") == "H"
+                or neighbor in mapped_nodes
+                for neighbor in target.neighbors(node)
+            )
+        )
+        analysis_target = target.subgraph(mapped_nodes).copy()
     result = ReindexResult(
         target_to_reference=target_to_reference,
         reference_to_target=reference_to_target,
@@ -48,7 +66,7 @@ def reindex_graphs(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: boo
             ),
         },
     )
-    return analyse_hydrogens(reference, target, result)
+    return analyse_hydrogens(reference, analysis_target, result)
 
 
 def reindex(
