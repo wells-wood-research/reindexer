@@ -127,11 +127,4 @@ def df2graph(
             ) + tol_bond
             if distance < cutoff:
                 graph.add_edge(node1, node2, distance=distance, cutoff=cutoff)
-
-    if logger:
-        logger.debug(
-            "Built connectivity graph with %d atoms and %d inferred edges",
-            graph.number_of_nodes(),
-            graph.number_of_edges(),
-        )
     return graph
