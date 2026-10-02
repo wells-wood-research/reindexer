@@ -39,6 +39,25 @@ def test_write_hydrogen_opt_writes_exact_input(tmp_path):
     )
 
 
+def test_write_hydrogen_opt_adds_pal_workers(tmp_path):
+    pdb_path = tmp_path / "input.pdb"
+    input_path = tmp_path / "opt.inp"
+    pdb_path.write_text("PDB\n")
+
+    write_hydrogen_opt(input_path, pdb_path, 0, 1, nprocs=6)
+
+    assert input_path.read_text() == (
+        "! XTB2 OptH\n"
+        "! PAL6\n"
+        f"*pdbfile 0 1 {pdb_path.resolve()}\n"
+    )
+
+
+def test_write_hydrogen_opt_rejects_invalid_pal_workers(tmp_path):
+    with pytest.raises(ValueError, match="positive integer"):
+        write_hydrogen_opt(tmp_path / "opt.inp", tmp_path / "input.pdb", 0, 1, nprocs=0)
+
+
 def test_label_xyz_with_reference_rejects_element_order_mismatch(tmp_path):
     reference_path = FIXTURES / "palmitic_acid_reference.pdb"
     reference_df = pdb2df(reference_path)
@@ -82,6 +101,7 @@ def test_reindex_optimise_branch_uses_mock_orca_and_relabels_output(tmp_path, mo
         orcadir=tmp_path,
         charge=0,
         multiplicity=1,
+        orca_nprocs=4,
     )
 
     output_df = pdb2df(output_path)
@@ -90,6 +110,9 @@ def test_reindex_optimise_branch_uses_mock_orca_and_relabels_output(tmp_path, mo
     assert list(output_df["ATOM_NAME"]) == list(pdb2df(reference_path)["ATOM_NAME"])
     assert result.validation["hydrogen_optimisation_requested"] is True
     assert result.validation["hydrogen_optimisation_completed"] is True
+    assert "! PAL4\n" in Path(
+        result.validation["hydrogen_optimisation_input"]
+    ).read_text()
     for key in (
         "hydrogen_optimisation_workdir",
         "hydrogen_optimisation_staged_pdb",

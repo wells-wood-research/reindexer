@@ -94,6 +94,7 @@ def reindex(
     timeout: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
     allow_subgraph: bool = False,
+    orca_nprocs: int = 1,
 ) -> ReindexResult:
     """Run graph reindexing, hydrogen generation, and optional ORCA optimization."""
     reference_path = Path(reference_path)
@@ -103,6 +104,8 @@ def reindex(
         raise ValueError(
             "optimise=True requires orcadir, charge, and multiplicity"
         )
+    if int(orca_nprocs) < 1:
+        raise ValueError("orca_nprocs must be a positive integer")
     reference_df = pdb2df(reference_path, logger=logger)
     target_df = pdb2df(target_path, logger=logger)
     if reference_df is None:
@@ -140,6 +143,7 @@ def reindex(
             multiplicity,
             timeout=timeout,
             logger=logger,
+            nprocs=int(orca_nprocs),
         )
         result.validation.update(
             {

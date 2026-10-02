@@ -54,6 +54,7 @@ def optimise_reindexed_pdb(
     multiplicity: int,
     timeout: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
+    nprocs: int = 1,
 ) -> HydrogenOptimizationArtifacts:
     """Optimize hydrogen coordinates using persistent files beside output.
 
@@ -85,6 +86,7 @@ def optimise_reindexed_pdb(
         artifacts.staged_pdb,
         charge,
         multiplicity,
+        nprocs=nprocs,
     )
     return_code = orca.run_orca(
         artifacts.input_path,

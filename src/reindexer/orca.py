@@ -12,13 +12,19 @@ def write_hydrogen_opt(
     pdb_file: str | Path,
     charge: int,
     multiplicity: int,
+    nprocs: int = 1,
 ) -> Path:
     """Write the ORCA input used to optimize hydrogen positions."""
     inp_file = Path(inp_file)
     inp_file.parent.mkdir(parents=True, exist_ok=True)
     pdb_file = Path(pdb_file).resolve()
+    nprocs = int(nprocs)
+    if nprocs < 1:
+        raise ValueError("nprocs must be a positive integer")
+    parallel_keyword = f"! PAL{nprocs}\n" if nprocs > 1 else ""
     inp_file.write_text(
         "! XTB2 OptH\n"
+        f"{parallel_keyword}"
         f"*pdbfile {int(charge)} {int(multiplicity)} {pdb_file}\n"
     )
     return inp_file
