@@ -8,7 +8,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from .io import df2pdb, pdb2df
+from .io import df2pdb, pdb2df, read_structure, write_structure
 from .graph import df2graph, pdb2graph
 from .matching import heavy_atom_graph
 from .result import ReindexResult
@@ -304,14 +304,19 @@ def write_reindexed_pdb(
         target_df,
         result,
     )
-    df2pdb(output_df, output_path, logger=logger)
+    # **The format follows the caller's filename.** A pipeline that wants CIF
+    # out asks by naming a `.cif`, and everything below -- the reparse and the
+    # graph it is validated through -- follows the same file, so the check is
+    # always against what was actually written rather than against a second
+    # conversion of it.
+    write_structure(output_df, output_path, logger=logger)
     if not output_path.exists():
-        raise PDBWriteError({"reason": "pdbUtils did not create output file", "output_path": str(output_path)})
+        raise PDBWriteError({"reason": "writer did not create output file", "output_path": str(output_path)})
 
-    reparsed = pdb2df(output_path, logger=logger)
+    reparsed = read_structure(output_path, logger=logger)
     if reparsed is None:
-        raise PDBWriteError({"reason": "failed to reparse output PDB", "output_path": str(output_path)})
-    output_graph = pdb2graph(output_path)
+        raise PDBWriteError({"reason": "failed to reparse output structure", "output_path": str(output_path)})
+    output_graph = df2graph(reparsed, logger=logger)
     validate_reindexed_pdb(
         reparsed,
         reference_df,

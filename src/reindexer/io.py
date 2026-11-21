@@ -438,18 +438,260 @@ def cif2df(path: str | Path, logger: Optional[logging.Logger] = None) -> pd.Data
     return df
 
 
-def read_structure(path: str | Path, logger: Optional[logging.Logger] = None) -> Optional[pd.DataFrame]:
-    """Read a PDB or component CIF into the package's atom DataFrame.
+def model_cif2df(path: str | Path, logger: Optional[logging.Logger] = None) -> pd.DataFrame:
+    """Read a *model* CIF -- one with an ``_atom_site`` loop -- into the atom frame.
 
-    Chosen by suffix. A PDB that cannot be read returns ``None`` as
-    :func:`pdb2df` does; a CIF that cannot be read raises, naming why.
+    Separate from :func:`cif2df` on purpose, because the two files answer
+    different questions. A component CIF states what a molecule *is*: one
+    block, one component, idealised coordinates, and a row order that is
+    itself the answer. A model CIF states where atoms *are*: many chains, real
+    coordinates, and two parallel numbering schemes. Reading them with one
+    function would mean one set of refusals guarding two sets of assumptions.
+
+    **`label_` is preferred over `auth_` wherever both exist.** The label
+    scheme is the file's own, contiguous and authored by whatever wrote it;
+    the auth scheme is whatever a depositor chose and may repeat, skip or
+    carry insertion codes. The reindexer matches on graph structure and writes
+    back by row, so what it needs is a numbering that cannot collide -- not
+    one that matches somebody's paper. Where `label_` is absent the `auth_`
+    column is used and a warning says so.
+
+    Read through biotite rather than this module's own CIF parser: an
+    `_atom_site` loop brings auth/label resolution, insertion codes, altlocs
+    and multi-model files with it, and a hand-rolled reader of those is a
+    silent-renumbering bug waiting to happen. That is the exact failure this
+    package exists to prevent.
+    """
+    import biotite.structure.io.pdbx as pdbx
+
+    path = Path(path)
+    logger = logger or _LOG
+    try:
+        cif = pdbx.CIFFile.read(str(path))
+        block = cif.block
+    except Exception as problem:
+        # biotite's own errors name neither the file nor what was wrong with
+        # it -- "Failed to deserialize category 'atom_site'" on an empty loop,
+        # for instance. This package's contract is that a CIF which cannot be
+        # read raises *naming why*, so the original is kept as the cause and
+        # the path is put in front of it.
+        raise ValueError(f"{path}: could not be read as a model CIF: {problem}") from problem
+    if "atom_site" not in block:
+        raise ValueError(
+            f"{path} has no _atom_site loop, so it is not a model. Component "
+            f"definitions are read by cif2df."
+        )
+    try:
+        # biotite deserialises lazily, so a malformed or empty loop raises
+        # here rather than at read(), and says only "Failed to deserialize
+        # category 'atom_site'".
+        site = block["atom_site"]
+        _ = site.row_count
+    except Exception as problem:
+        raise ValueError(
+            f"{path}: its _atom_site loop could not be read: {problem}"
+        ) from problem
+
+    def column(label: str, auth: str, *, required: bool = True):
+        if label in site:
+            return site[label].as_array(str)
+        if auth in site:
+            logger.warning(
+                "%s has no _atom_site.%s; falling back to %s, which a depositor "
+                "may have renumbered.", path, label, auth,
+            )
+            return site[auth].as_array(str)
+        if required:
+            raise ValueError(f"{path}: _atom_site has neither {label} nor {auth}")
+        return None
+
+    group = (
+        site["group_PDB"].as_array(str) if "group_PDB" in site
+        else np.array(["ATOM"] * site.row_count)
+    )
+    atom_names = column("label_atom_id", "auth_atom_id")
+    res_names = column("label_comp_id", "auth_comp_id")
+    chains = column("label_asym_id", "auth_asym_id")
+    res_ids = column("label_seq_id", "auth_seq_id")
+    elements = (
+        site["type_symbol"].as_array(str) if "type_symbol" in site
+        else np.array([""] * site.row_count)
+    )
+    for axis in ("Cartn_x", "Cartn_y", "Cartn_z"):
+        if axis not in site:
+            raise ValueError(f"{path}: _atom_site has no {axis}")
+    xs = site["Cartn_x"].as_array(float)
+    ys = site["Cartn_y"].as_array(float)
+    zs = site["Cartn_z"].as_array(float)
+
+    models = (
+        site["pdbx_PDB_model_num"].as_array(str) if "pdbx_PDB_model_num" in site
+        else None
+    )
+    keep = np.ones(site.row_count, dtype=bool)
+    if models is not None:
+        distinct = [m for m in dict.fromkeys(models.tolist())]
+        if len(distinct) > 1:
+            # Refused rather than silently taking the first: which model a
+            # caller meant is not this reader's guess to make, and reindexing
+            # the wrong one would renumber against the wrong geometry.
+            raise ValueError(
+                f"{path} holds {len(distinct)} models "
+                f"(pdbx_PDB_model_num {', '.join(distinct[:4])}...). Split it "
+                f"before reindexing; this reader will not choose one."
+            )
+
+    rows = []
+    for index in range(site.row_count):
+        if not keep[index]:
+            continue
+        raw_res = str(res_ids[index]).strip()
+        if raw_res in _CIF_MISSING or raw_res == "":
+            # A ligand's label_seq_id is "." by the dictionary. Numbering it 0
+            # keeps the column an integer without inventing a residue index
+            # that could collide with a real one.
+            residue = 0
+        else:
+            residue = int(float(raw_res))
+        element = str(elements[index]).strip()
+        name = str(atom_names[index]).strip()
+        rows.append({
+            "ATOM": str(group[index]).strip() or "ATOM",
+            "ATOM_ID": index + 1,
+            "ATOM_NAME": name,
+            "RES_NAME": str(res_names[index]).strip(),
+            "CHAIN_ID": str(chains[index]).strip(),
+            "RES_ID": residue,
+            "X": float(xs[index]),
+            "Y": float(ys[index]),
+            "Z": float(zs[index]),
+            "OCCUPANCY": 1.0,
+            "BETAFACTOR": 0.0,
+            "ELEMENT": _normalise_element(element or _element_from_atom_name(name)),
+        })
+    if not rows:
+        raise ValueError(f"{path}: _atom_site is empty")
+    return pd.DataFrame(rows, columns=PDB_COLUMNS)
+
+
+def df2cif(
+    df: pd.DataFrame,
+    path: str | Path,
+    logger: Optional[logging.Logger] = None,
+    block_name: str = "reindexed",
+) -> Optional[Path]:
+    """Write the atom frame as a model CIF, mirroring :func:`df2pdb`.
+
+    Written directly rather than through biotite because what matters here is
+    that **row order is preserved exactly**: the reindexed order is the whole
+    output of this package, and a toolkit free to sort by chain or renumber on
+    write would quietly undo it. Reading needs a toolkit's auth/label
+    knowledge; writing needs only that nothing is reordered.
+
+    Both numbering schemes are written with the same values, so a reader
+    preferring either gets what this package decided.
+
+    **Coordinates keep five decimals, not PDB's three.** Three is a
+    column-width limit of the PDB format, not a statement about precision, and
+    writing it here would re-import a loss this whole phase exists to remove --
+    a 0.0005 A round-trip drift on every atom, for nothing. Five matches what
+    Boltz2 and the wwPDB write and round-trips their files exactly.
+    """
+    path = Path(path)
+    logger = logger or _LOG
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        logger.error("Cannot write an empty or non-DataFrame CIF")
+        return None
+    missing = set(PDB_COLUMNS) - set(df.columns)
+    if missing:
+        raise ValueError(f"DataFrame is missing columns: {sorted(missing)}")
+
+    def quoted(value: str) -> str:
+        text = str(value).strip()
+        if text == "":
+            return "."
+        return f"'{text}'" if any(c.isspace() or c == "'" for c in text) else text
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as handle:
+        handle.write(f"data_{block_name}\n#\nloop_\n")
+        for tag in (
+            "group_PDB", "id", "type_symbol", "label_atom_id", "label_comp_id",
+            "label_asym_id", "label_seq_id", "Cartn_x", "Cartn_y", "Cartn_z",
+            "occupancy", "B_iso_or_equiv", "auth_comp_id", "auth_asym_id",
+            "auth_seq_id", "auth_atom_id", "pdbx_PDB_model_num",
+        ):
+            handle.write(f"_atom_site.{tag}\n")
+        for index, row in df.reset_index(drop=True).iterrows():
+            serial = int(row["ATOM_ID"]) if pd.notna(row["ATOM_ID"]) else index + 1
+            name = quoted(row["ATOM_NAME"])
+            comp = quoted(row["RES_NAME"])
+            asym = quoted(row["CHAIN_ID"])
+            seq = int(row["RES_ID"])
+            handle.write(
+                f"{str(row['ATOM']).strip() or 'ATOM'} {serial} "
+                f"{_normalise_element(row['ELEMENT']) or '.'} {name} {comp} "
+                f"{asym} {seq} "
+                f"{float(row['X']):.5f} {float(row['Y']):.5f} {float(row['Z']):.5f} "
+                f"{float(row['OCCUPANCY']):.2f} {float(row['BETAFACTOR']):.2f} "
+                f"{comp} {asym} {seq} {name} 1\n"
+            )
+        handle.write("#\n")
+    return path if path.is_file() else None
+
+
+def read_structure(path: str | Path, logger: Optional[logging.Logger] = None) -> Optional[pd.DataFrame]:
+    """Read a PDB, component CIF or model CIF into the package's atom DataFrame.
+
+    The format is chosen by suffix, and a ``.cif`` is then chosen **by its
+    contents**: a block carrying ``_atom_site`` is a model and goes to
+    :func:`model_cif2df`, anything else is a component definition and goes to
+    :func:`cif2df`. Both extensions are ``.cif`` and the caller usually does
+    not know which it holds -- a prediction and a molecule definition arrive
+    through the same argument -- so asking the file is the only answer that
+    cannot be got wrong by a caller.
+
+    A PDB that cannot be read returns ``None`` as :func:`pdb2df` does; a CIF
+    that cannot be read raises, naming why.
     """
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".pdb":
         return pdb2df(path, logger=logger)
     if suffix == ".cif":
-        return cif2df(path, logger=logger)
+        return model_cif2df(path, logger=logger) if cif_is_model(path) else cif2df(path, logger=logger)
+    raise ValueError(f"Unsupported structure format {suffix!r} (expected .pdb or .cif): {path}")
+
+
+def cif_is_model(path: str | Path) -> bool:
+    """Whether this CIF carries an ``_atom_site`` loop, so holds coordinates.
+
+    Read with this package's own parser rather than biotite: deciding *which*
+    reader to use must not depend on the reader being decided about, and a
+    component definition is not something biotite's model reader should be
+    asked to open just to find out it is the wrong kind.
+    """
+    text = Path(path).read_text(errors="replace")
+    return any("_atom_site" in _block_categories(block) for block in _parse_cif(text))
+
+
+def write_structure(
+    df: pd.DataFrame,
+    path: str | Path,
+    logger: Optional[logging.Logger] = None,
+) -> Optional[Path]:
+    """Write the atom frame in whichever format ``path`` names.
+
+    The output format follows the caller's filename rather than a flag, so a
+    pipeline that wants CIF out asks for it the same way it asks for anything
+    else: by saying where to put it.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".pdb":
+        return df2pdb(df, path, logger=logger)
+    if suffix == ".cif":
+        return df2cif(df, path, logger=logger)
     raise ValueError(f"Unsupported structure format {suffix!r} (expected .pdb or .cif): {path}")
 
 
