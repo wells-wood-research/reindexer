@@ -1,6 +1,7 @@
 """Graph-based molecular protonation and reindexing to match reference molecule.
 
-Supports xyz and pdb file formats.
+Reads PDB, XYZ, and component-definition mmCIF (``_chem_comp_atom``, see
+:func:`reindexer.io.cif2df`).
 
 The reindexing is based on the graph isomorphism between the reference molecule and the target molecule, which is used to relabel the atoms in the target molecule to match the reference molecule.
 

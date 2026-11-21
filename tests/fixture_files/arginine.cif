@@ -1,0 +1,102 @@
+data_ARG
+#
+_chem_comp.id                  ARG
+_chem_comp.name                'ARG side chain, Protonated'
+_chem_comp.type                non-polymer
+_chem_comp.formula             'C4 H12 N3'
+_chem_comp.pdbx_formal_charge  1
+#
+# Cbeta-capped side-chain fragment, generated from the wwPDB Chemical
+# Component Dictionary entry ARG by scripts/build_fragment_cifs.py.
+# Backbone atoms are removed and CB carries a hydrogen in place of CA.
+#
+# _chem_comp_atom below is the molecule's only atom list. An atom is
+# addressed by its position in it, counting from 0, and that same number
+# is the atom's index in the graph config, in the assembly component and
+# in the ORCA input. Nothing renumbers it on the way. The file therefore
+# carries no _atom_site loop and no pdbx_ordinal, because either would be
+# a second numbering that could disagree with this one.
+#
+# The chemistry above is the dictionary's. The coordinates below are NOT:
+# they are this fragment optimised at XTB2 with ALPB(thf), the surface assemble docks on, at the charge and
+# multiplicity it declares (+1, 1).
+#
+# The dictionary could not supply them. A protonation variant is made by
+# deleting a hydrogen, which does not move the heavy atoms the dictionary
+# placed around it, so the fragment would declare one charge while carrying
+# the geometry of another: CCD GLU is the neutral acid, and dropping HE2
+# leaves a C=O at 1.21 A and a C-OH at 1.34 A opened to 120 degrees where a
+# carboxylate is symmetric at 1.26 A and 129 degrees. At QM level that is a
+# different molecule, and it behaves like one -- ORCA's DOCKER rejected every
+# pose of such a glutamate, because the restrained hydroxyl-type oxygen took
+# the substrate's proton back and broke the topology.
+#
+# They are written to the _ideal columns because that is where biotite and
+# the GUI parser read coordinates from, not as a claim that the dictionary
+# idealised them. There is no second, experimental set: a Cbeta-capped side
+# chain has never been in a crystal.
+#
+# Connectivity was read back off the optimised geometry and matched the
+# bonds below, so this is the same molecule that went in.
+#
+loop_
+_pdbx_chem_comp_descriptor.comp_id
+_pdbx_chem_comp_descriptor.type
+_pdbx_chem_comp_descriptor.program
+_pdbx_chem_comp_descriptor.descriptor
+ARG SMILES RDKit 'CCCNC(N)=[NH2+]'
+#
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_aromatic_flag
+_chem_comp_atom.pdbx_model_Cartn_x_ideal
+_chem_comp_atom.pdbx_model_Cartn_y_ideal
+_chem_comp_atom.pdbx_model_Cartn_z_ideal
+ARG CB   C   0 N    1.607    2.253   -2.198
+ARG CG   C   0 N    1.777    0.991   -3.037
+ARG CD   C   0 N    3.198    0.841   -3.574
+ARG NE   N   0 N    4.114    0.565   -2.480
+ARG CZ   C   0 N    5.437    0.612   -2.544
+ARG NH1  N   0 N    6.157    0.335   -1.457
+ARG NH2  N   1 N    6.057    0.937   -3.675
+ARG HB2  H   0 N    2.288    2.267   -1.351
+ARG HB3  H   0 N    1.790    3.140   -2.800
+ARG HG2  H   0 N    1.093    1.032   -3.886
+ARG HG3  H   0 N    1.513    0.111   -2.448
+ARG HD2  H   0 N    3.230    0.024   -4.302
+ARG HD3  H   0 N    3.486    1.775   -4.065
+ARG HE   H   0 N    3.683    0.253   -1.623
+ARG HH11 H   0 N    7.162    0.364   -1.483
+ARG HH12 H   0 N    5.714    0.106   -0.584
+ARG HH21 H   0 N    5.537    1.120   -4.515
+ARG HH22 H   0 N    7.060    1.001   -3.712
+ARG HB1  H   0 N    0.592    2.313   -1.814
+#
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+ARG CB   CG   SING N
+ARG CB   HB2  SING N
+ARG CB   HB3  SING N
+ARG CG   CD   SING N
+ARG CG   HG2  SING N
+ARG CG   HG3  SING N
+ARG CD   NE   SING N
+ARG CD   HD2  SING N
+ARG CD   HD3  SING N
+ARG NE   CZ   SING N
+ARG NE   HE   SING N
+ARG CZ   NH1  SING N
+ARG CZ   NH2  DOUB N
+ARG NH1  HH11 SING N
+ARG NH1  HH12 SING N
+ARG NH2  HH21 SING N
+ARG NH2  HH22 SING N
+ARG CB   HB1  SING N
+#

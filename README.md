@@ -76,7 +76,8 @@ for those lower-level steps.
 
 The full `reindex` pipeline is:
 
-1. Parse both PDB files into pandas DataFrames.
+1. Parse the reference (PDB or component CIF) and the target into pandas
+   DataFrames.
 2. Build distance-inferred NetworkX graphs.
 3. Remove hydrogens and match the heavy-atom graphs.
 4. Assign existing target hydrogens to reference hydrogen slots.
@@ -109,6 +110,33 @@ records, including headers, connectivity records, and model delimiters, are
 ignored. The parser therefore does not interpret PDB connectivity records and
 should be given one intended structure. Coordinates must be finite and atom
 records must be well formed.
+
+### Component CIF references
+
+Either input may instead be a component-definition mmCIF (`.cif`), read by
+`reindexer.io.cif2df`. Such a file *defines* a molecule rather than modelling
+one: its atoms are the rows of `_chem_comp_atom` and it has no `_atom_site`
+loop. An atom is identified by its 0-based row position, and the output keeps
+that order exactly. Both the 8-column fragment layout and the full wwPDB
+Chemical Component Dictionary layout are read; columns are located by header,
+never by position.
+
+- Coordinates are the ideal set (`pdbx_model_Cartn_{x,y,z}_ideal`). The
+  `model_Cartn_*` set, a different, experimental geometry, is used only if the
+  ideal set is absent or leaves an atom unplaced, and a warning says so. An
+  atom unplaced in both is an error.
+- Refused, because each would silently repoint atoms: an `_atom_site` loop
+  (a model with its own numbering, which this reader does not read), more than
+  one component or `_chem_comp_atom` loop, a `pdbx_ordinal` that disagrees
+  with row order, duplicate atom names.
+- `_chem_comp.pdbx_formal_charge` is carried in `df.attrs["formal_charge"]`.
+  A mismatch with the summed atom charges is logged, as is optimising at a
+  `charge` that differs from it; neither is overridden.
+- Chain `A` and residue `1` are invented, since a definition has neither.
+  Standard amino-acid component IDs are written as `ATOM`, others as
+  `HETATM`.
+- `_chem_comp_bond` is not read: connectivity remains distance-inferred, as
+  for PDB input.
 
 In strict mode, output rows are exactly the reference rows and remain in
 reference order. Reference atom names, residue fields, element fields,
@@ -187,7 +215,7 @@ required. The directory must contain the ORCA executable and its `otool_xtb`
 helper. The stage writes persistent files beside the output in a directory
 named `<output-stem>_orca`, including `opt.inp`, `opt.out`, `opt.err`, and
 `opt.xyz`. The XYZ result is checked against the reference atom count and
-element order, labelled with reference PDB metadata, and copied over the
+element order, labelled with the reference's atom metadata, and copied over the
 reindexed output. The optimized XYZ/PDB are not subjected to an additional
 heavy-atom coordinate validation after ORCA completes.
 
@@ -195,12 +223,13 @@ heavy-atom coordinate validation after ORCA completes.
 
 The modules also provide:
 
-- `reindexer.io`: PDB DataFrame conversion and strict XYZ reading
+- `reindexer.io`: PDB and component-CIF DataFrame conversion and strict XYZ
+  reading
 - `reindexer.graph`: DataFrame, PDB, and XYZ graph construction
 - `reindexer.matching`: heavy-atom matching and matching exceptions
 - `reindexer.hydrogens`: hydrogen analysis and coordinate generation
 - `reindexer.writer`: in-memory PDB construction and validation
-- `reindexer.labelling`: apply XYZ coordinates to reference PDB labels
+- `reindexer.labelling`: apply XYZ coordinates to the reference's labels
 - `reindexer.orca`: ORCA input generation and subprocess execution
 
 There is no `reindexer` CLI and no `python -m reindexer` entry point in the

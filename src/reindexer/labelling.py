@@ -1,10 +1,13 @@
-"""Apply ORCA XYZ coordinates to reference PDB atom labels and ordering."""
+"""Apply ORCA XYZ coordinates to the reference's atom labels and ordering.
+
+The reference is a PDB or a component CIF (see :func:`reindexer.io.cif2df`).
+"""
 
 from pathlib import Path
 
 import numpy as np
 
-from .io import df2pdb, pdb2df, read_xyz
+from .io import df2pdb, read_structure, read_xyz
 
 
 class LabellingError(ValueError):
@@ -19,23 +22,23 @@ def _normalise_element(value: object) -> str:
 
 
 def label_xyz_with_reference(
-    reference_pdb: str | Path,
+    reference_path: str | Path,
     xyz_file: str | Path,
     output_pdb: str | Path,
 ) -> Path:
-    """Write XYZ coordinates using the reference PDB's atom identity/order."""
-    reference_pdb = Path(reference_pdb)
+    """Write XYZ coordinates as a PDB using the reference's atom identity/order."""
+    reference_path = Path(reference_path)
     xyz_file = Path(xyz_file)
     output_pdb = Path(output_pdb)
 
-    reference_df = pdb2df(reference_pdb)
+    reference_df = read_structure(reference_path)
     if reference_df is None or reference_df.empty:
-        raise LabellingError(f"Reference PDB contains no atom records: {reference_pdb}")
+        raise LabellingError(f"Reference contains no atom records: {reference_path}")
 
     atom_count, _, coordinates, elements = read_xyz(xyz_file)
     if atom_count != len(reference_df):
         raise LabellingError(
-            f"Atom count mismatch: reference PDB has {len(reference_df)}, "
+            f"Atom count mismatch: reference has {len(reference_df)}, "
             f"XYZ has {atom_count}"
         )
 
@@ -56,8 +59,8 @@ def label_xyz_with_reference(
             if reference_element != xyz_element
         )
         raise LabellingError(
-            "PDB/XYZ element order mismatch at atom index "
-            f"{mismatch[0]}: PDB={mismatch[1]!r}, XYZ={mismatch[2]!r}"
+            "Reference/XYZ element order mismatch at atom index "
+            f"{mismatch[0]}: reference={mismatch[1]!r}, XYZ={mismatch[2]!r}"
         )
 
     output_df = reference_df.copy()

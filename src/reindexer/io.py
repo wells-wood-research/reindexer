@@ -1,8 +1,12 @@
-"""Small PDB and XYZ readers/writers used by the reindexing package.
+"""Small PDB, XYZ and component-CIF readers/writers used by the reindexer.
 
 The reindexer intentionally owns the limited file-format functionality it
 needs.  This keeps it independent from the parent workflow and from a
 project-specific structure utility.
+
+The CIF reader reads one kind of CIF only: a *component definition*, whose
+atoms are stated in ``_chem_comp_atom`` and which has no ``_atom_site`` loop.
+See :func:`cif2df`.
 """
 
 from pathlib import Path
@@ -129,6 +133,324 @@ def df2pdb(
             )
         handle.write("END\n")
     return path if path.is_file() else None
+
+
+_LOG = logging.getLogger(__name__)
+
+#: Residue names written as ATOM rather than HETATM records. A Cbeta-capped
+#: amino-acid fragment is a non-polymer *definition*, but what the reindexer
+#: writes from it is a residue in a structure, and readers that type a chain
+#: of HETATM records as non-polymer will not treat it as a chain. Mirrors
+#: ``prometheozyme.common.frames.AMINO_ACID_RESIDUE_NAMES``, which this
+#: package deliberately does not import.
+AMINO_ACID_RESIDUE_NAMES = frozenset({
+    "TRP", "HIS", "TYR", "PHE", "ASN", "ASP", "GLN", "GLU",
+    "CYS", "SER", "THR", "LEU", "VAL", "ILE", "MET", "LYS",
+    "ARG", "PRO", "ALA", "GLY", "UNK", "MSK",
+})
+
+_CIF_MISSING = {"?", "."}
+_CIF_IDEAL = tuple(f"pdbx_model_cartn_{dim}_ideal" for dim in "xyz")
+_CIF_MODEL = tuple(f"model_cartn_{dim}" for dim in "xyz")
+
+
+def _cif_tokens(text: str):
+    """Yield ``(value, quoted)`` for every CIF token, comments removed.
+
+    ``quoted`` matters because only an *unquoted* ``_tag``, ``loop_`` or
+    ``data_`` is syntax; the same text in quotes is a value.
+    """
+    lines = text.splitlines()
+    line_index = 0
+    while line_index < len(lines):
+        line = lines[line_index]
+        line_index += 1
+        if line.startswith(";"):
+            # Semicolon text field: runs to the next line starting with ';'.
+            field = [line[1:]]
+            while line_index < len(lines) and not lines[line_index].startswith(";"):
+                field.append(lines[line_index])
+                line_index += 1
+            if line_index >= len(lines):
+                raise ValueError("Unterminated semicolon text field")
+            line_index += 1
+            yield "\n".join(field).strip(), True
+            continue
+        position, length = 0, len(line)
+        while position < length:
+            character = line[position]
+            if character.isspace():
+                position += 1
+            elif character == "#":
+                break
+            elif character in "'\"":
+                # A quote closes only where it is followed by whitespace or
+                # the end of the line, so C1'-style names survive in "...".
+                end = position + 1
+                while end < length and not (
+                    line[end] == character and (end + 1 == length or line[end + 1].isspace())
+                ):
+                    end += 1
+                if end >= length:
+                    raise ValueError(f"Unterminated quoted value: {line!r}")
+                yield line[position + 1:end], True
+                position = end + 1
+            else:
+                end = position
+                while end < length and not line[end].isspace():
+                    end += 1
+                yield line[position:end], False
+                position = end
+
+
+def _is_cif_syntax(token: str, quoted: bool) -> bool:
+    if quoted:
+        return False
+    lower = token.lower()
+    return (
+        lower.startswith(("_", "data_", "save_"))
+        or lower in {"loop_", "stop_", "global_"}
+    )
+
+
+def _parse_cif(text: str) -> list[dict]:
+    """Parse CIF text into data blocks of single items and loops.
+
+    Each block is ``{"name", "items": {tag: value}, "loops": [(tags, rows)]}``.
+    Tags are lower-cased, since CIF tags are case-insensitive; values are not.
+    """
+    tokens = list(_cif_tokens(text))
+    blocks: list[dict] = []
+    index = 0
+    while index < len(tokens):
+        token, quoted = tokens[index]
+        lower = token.lower()
+        if not quoted and lower.startswith("data_"):
+            blocks.append({"name": token[5:], "items": {}, "loops": []})
+            index += 1
+            continue
+        if not blocks:
+            raise ValueError(f"CIF content before any data_ block: {token!r}")
+        block = blocks[-1]
+        if not quoted and lower == "loop_":
+            index += 1
+            tags = []
+            while index < len(tokens) and not tokens[index][1] and tokens[index][0].startswith("_"):
+                tags.append(tokens[index][0].lower())
+                index += 1
+            if not tags:
+                raise ValueError("CIF loop_ with no tags")
+            values = []
+            while index < len(tokens) and not _is_cif_syntax(*tokens[index]):
+                values.append(tokens[index][0])
+                index += 1
+            if len(values) % len(tags):
+                raise ValueError(
+                    f"CIF loop over {tags[0].split('.')[0]} has {len(values)} values, "
+                    f"not a multiple of its {len(tags)} columns"
+                )
+            rows = [values[start:start + len(tags)] for start in range(0, len(values), len(tags))]
+            block["loops"].append((tags, rows))
+        elif not quoted and token.startswith("_"):
+            if index + 1 >= len(tokens) or _is_cif_syntax(*tokens[index + 1]):
+                raise ValueError(f"CIF item {token} has no value")
+            block["items"][lower] = tokens[index + 1][0]
+            index += 2
+        else:
+            raise ValueError(f"Unexpected CIF token {token!r}")
+    return blocks
+
+
+def _block_categories(block: dict) -> set[str]:
+    tags = list(block["items"]) + [tag for tags, _ in block["loops"] for tag in tags]
+    return {tag.split(".", 1)[0] for tag in tags}
+
+
+def _coordinates(columns, rows, names, fields, label, path):
+    """One coordinate set as an (n, 3) array, or the reason it is unusable."""
+    missing = [field for field in fields if field not in columns]
+    if missing:
+        return None, f"{path.name} has no {label} coordinate columns ({', '.join(missing)})"
+    unplaced = [
+        names[row_index]
+        for row_index, row in enumerate(rows)
+        if any(row[columns[field]] in _CIF_MISSING for field in fields)
+    ]
+    if unplaced:
+        return None, f"{path.name} leaves atoms without {label} coordinates: {', '.join(unplaced)}"
+    try:
+        array = np.asarray(
+            [[float(row[columns[field]]) for field in fields] for row in rows], dtype=float
+        )
+    except ValueError as exc:
+        raise ValueError(f"{path.name} has a non-numeric {label} coordinate: {exc}") from exc
+    return array, None
+
+
+def cif2df(path: str | Path, logger: Optional[logging.Logger] = None) -> pd.DataFrame:
+    """Read a component-definition CIF's ``_chem_comp_atom`` loop.
+
+    A component CIF *defines* a molecule rather than modelling one. Its atoms
+    are the rows of ``_chem_comp_atom``, and an atom is addressed by its
+    0-based position there; downstream graph configs, assembly components and
+    ORCA inputs all use that same number. Row order is therefore the contract,
+    and the returned DataFrame keeps it exactly: row ``i`` is file row ``i``.
+
+    Columns are found by their header, never by position, because the two
+    flavours in use differ in width: an 8-column library fragment and a
+    21-column wwPDB dictionary entry. Coordinates are the *ideal* set
+    (``pdbx_model_Cartn_*_ideal``); in a dictionary entry the ``model_Cartn_*``
+    set is a different, experimental geometry and is read only if the ideal
+    set is absent or incomplete, which is logged. A definition that leaves an
+    atom unplaced in both is refused.
+
+    Refused rather than guessed at, because each would silently repoint
+    atoms: a file with an ``_atom_site`` loop (a model, with a second
+    numbering — not this reader's kind); more than one component; a
+    ``pdbx_ordinal`` that disagrees with row order; duplicate atom names.
+
+    ``ATOM_ID`` is the 1-based position, and chain ``A`` / residue ``1`` are
+    invented, because a definition states neither. ``df.attrs`` carries
+    ``comp_id``, per-atom ``charges`` and the declared ``formal_charge``
+    (``_chem_comp.pdbx_formal_charge``, ``None`` if absent); a disagreement
+    between the declared charge and the atom charges is logged, not resolved.
+
+    Raises ``FileNotFoundError`` or ``ValueError`` naming the problem; unlike
+    :func:`pdb2df` it never returns ``None``.
+    """
+    log = logger or _LOG
+    path = Path(path)
+    if path.suffix.lower() != ".cif":
+        raise ValueError(f"Not a .cif file: {path}")
+    if not path.is_file():
+        raise FileNotFoundError(f"CIF file does not exist: {path}")
+
+    blocks = _parse_cif(path.read_text())
+    modelled = [block["name"] for block in blocks if "_atom_site" in _block_categories(block)]
+    if modelled:
+        raise ValueError(
+            f"{path} has an _atom_site loop (data_{modelled[0]}), so it models a "
+            "structure rather than defining a component. The reindexer reads only "
+            "component definitions from CIF, whose atoms are _chem_comp_atom alone."
+        )
+    found = [
+        (block, tags, rows)
+        for block in blocks
+        for tags, rows in block["loops"]
+        if tags[0].startswith("_chem_comp_atom.")
+    ]
+    if not found:
+        raise ValueError(f"{path} has no _chem_comp_atom loop")
+    if len(found) > 1:
+        raise ValueError(
+            f"{path} has {len(found)} _chem_comp_atom loops; a component CIF defines one molecule"
+        )
+    block, tags, rows = found[0]
+    if not rows:
+        raise ValueError(f"{path} states no atoms in its _chem_comp_atom loop")
+    columns = {tag.split(".", 1)[1]: position for position, tag in enumerate(tags)}
+
+    required = ("comp_id", "atom_id", "type_symbol")
+    missing = [column for column in required if column not in columns]
+    if missing:
+        raise ValueError(f"{path} _chem_comp_atom lacks {', '.join(missing)}")
+
+    names = [row[columns["atom_id"]] for row in rows]
+    duplicated = sorted({name for name in names if names.count(name) > 1})
+    if duplicated:
+        raise ValueError(f"{path} names more than one atom {', '.join(duplicated)}")
+
+    comp_ids = {row[columns["comp_id"]] for row in rows}
+    if len(comp_ids) != 1:
+        raise ValueError(f"{path} defines more than one component: {', '.join(sorted(comp_ids))}")
+    comp_id = comp_ids.pop()
+
+    if "pdbx_ordinal" in columns:
+        ordinals = [row[columns["pdbx_ordinal"]] for row in rows]
+        expected = [str(position) for position in range(1, len(rows) + 1)]
+        if ordinals != expected:
+            first = next(i for i, (a, b) in enumerate(zip(ordinals, expected)) if a != b)
+            raise ValueError(
+                f"{path} pdbx_ordinal disagrees with row order at row {first} "
+                f"({names[first]}: ordinal {ordinals[first]}, position {first + 1}). "
+                "Atoms are addressed by row position; refusing a second numbering."
+            )
+
+    coordinates, ideal_problem = _coordinates(columns, rows, names, _CIF_IDEAL, "ideal", path)
+    if coordinates is None:
+        coordinates, model_problem = _coordinates(columns, rows, names, _CIF_MODEL, "model", path)
+        if coordinates is None:
+            raise ValueError(f"{ideal_problem}; and {model_problem}")
+        log.warning("%s; using the model_Cartn_* coordinates instead", ideal_problem)
+    elif all(field in columns for field in _CIF_MODEL):
+        log.debug(
+            "%s: ignoring the model_Cartn_* coordinate set; the ideal set is the definition's",
+            path.name,
+        )
+
+    elements = [_normalise_element(row[columns["type_symbol"]]) for row in rows]
+    empty = [names[i] for i, element in enumerate(elements) if not element]
+    if empty:
+        raise ValueError(f"{path} gives no type_symbol for {', '.join(empty)}")
+
+    charges = []
+    for row, name in zip(rows, names):
+        value = row[columns["charge"]] if "charge" in columns else "?"
+        try:
+            charges.append(0 if value in _CIF_MISSING else int(value))
+        except ValueError as exc:
+            raise ValueError(f"{path} atom {name} has a non-integer charge {value!r}") from exc
+
+    formal_value = block["items"].get("_chem_comp.pdbx_formal_charge")
+    formal_charge = None
+    if formal_value is not None and formal_value not in _CIF_MISSING:
+        try:
+            formal_charge = int(formal_value)
+        except ValueError as exc:
+            raise ValueError(f"{path} pdbx_formal_charge is not an integer: {formal_value!r}") from exc
+        if formal_charge != sum(charges):
+            log.warning(
+                "%s declares pdbx_formal_charge %d but its atom charges sum to %d; "
+                "the declared charge is authoritative",
+                path.name, formal_charge, sum(charges),
+            )
+
+    count = len(rows)
+    record = "ATOM" if comp_id.strip().upper() in AMINO_ACID_RESIDUE_NAMES else "HETATM"
+    df = pd.DataFrame(
+        {
+            "ATOM": [record] * count,
+            "ATOM_ID": list(range(1, count + 1)),
+            "ATOM_NAME": names,
+            "RES_NAME": [comp_id] * count,
+            "CHAIN_ID": ["A"] * count,
+            "RES_ID": [1] * count,
+            "X": coordinates[:, 0],
+            "Y": coordinates[:, 1],
+            "Z": coordinates[:, 2],
+            "OCCUPANCY": [1.0] * count,
+            "BETAFACTOR": [0.0] * count,
+            "ELEMENT": elements,
+        },
+        columns=PDB_COLUMNS,
+    )
+    df.attrs.update({"comp_id": comp_id, "charges": charges, "formal_charge": formal_charge})
+    return df
+
+
+def read_structure(path: str | Path, logger: Optional[logging.Logger] = None) -> Optional[pd.DataFrame]:
+    """Read a PDB or component CIF into the package's atom DataFrame.
+
+    Chosen by suffix. A PDB that cannot be read returns ``None`` as
+    :func:`pdb2df` does; a CIF that cannot be read raises, naming why.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".pdb":
+        return pdb2df(path, logger=logger)
+    if suffix == ".cif":
+        return cif2df(path, logger=logger)
+    raise ValueError(f"Unsupported structure format {suffix!r} (expected .pdb or .cif): {path}")
 
 
 def read_xyz(path: str | Path) -> tuple[int, str, np.ndarray, list[str]]:

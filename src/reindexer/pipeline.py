@@ -7,8 +7,8 @@ import logging
 
 import networkx as nx
 
-from .io import pdb2df
-from .graph import pdb2graph
+from .io import read_structure
+from .graph import df2graph
 from .hydrogens import analyse_hydrogens, generate_missing_hydrogens
 from .matching import heavy_atom_graph, match_heavy_atoms
 from .optimization import optimise_reindexed_pdb
@@ -106,15 +106,24 @@ def reindex(
         )
     if int(orca_nprocs) < 1:
         raise ValueError("orca_nprocs must be a positive integer")
-    reference_df = pdb2df(reference_path, logger=logger)
-    target_df = pdb2df(target_path, logger=logger)
+    reference_df = read_structure(reference_path, logger=logger)
+    target_df = read_structure(target_path, logger=logger)
     if reference_df is None:
-        raise ValueError(f"Failed to read reference PDB: {reference_path}")
+        raise ValueError(f"Failed to read reference structure: {reference_path}")
     if target_df is None:
-        raise ValueError(f"Failed to read target PDB: {target_path}")
+        raise ValueError(f"Failed to read target structure: {target_path}")
+    declared_charge = reference_df.attrs.get("formal_charge")
+    if optimise and declared_charge is not None and int(charge) != declared_charge:
+        (logger or logging.getLogger(__name__)).warning(
+            "Optimising %s at charge %d, but its reference %s declares "
+            "pdbx_formal_charge %d",
+            target_path.name, int(charge), reference_path.name, declared_charge,
+        )
 
-    reference_graph = pdb2graph(reference_path, tol_bond=tol_bond, logger=logger)
-    target_graph = pdb2graph(target_path, tol_bond=tol_bond, logger=logger)
+    # Graphs are built from the frames just read, so the atom order the graph
+    # indexes is, by construction, the order the writer and labeller use.
+    reference_graph = df2graph(reference_df, tol_bond=tol_bond, logger=logger)
+    target_graph = df2graph(target_df, tol_bond=tol_bond, logger=logger)
     result = reindex_graphs(reference_graph, target_graph, allow_subgraph=allow_subgraph)
     hydrogen_target = (
         _hydrogen_analysis_target(target_graph, set(result.target_to_reference))

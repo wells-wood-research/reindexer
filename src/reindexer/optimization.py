@@ -66,7 +66,7 @@ def optimise_reindexed_pdb(
     orcadir = Path(orcadir)
     if not reference_path.is_file():
         raise HydrogenOptimizationError(
-            {"reason": "reference PDB does not exist", "path": str(reference_path)}
+            {"reason": "reference structure does not exist", "path": str(reference_path)}
         )
     if not reindexed_path.is_file():
         raise HydrogenOptimizationError(
@@ -124,7 +124,7 @@ def optimise_reindexed_pdb(
     except Exception as exc:
         raise HydrogenOptimizationError(
             {
-                "reason": "failed to label ORCA XYZ with reference PDB",
+                "reason": "failed to label ORCA XYZ with reference",
                 "xyz_path": str(artifacts.optimized_xyz),
                 "labelled_pdb": str(artifacts.labelled_pdb),
                 "error": str(exc),
