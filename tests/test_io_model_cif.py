@@ -210,3 +210,32 @@ def test_a_name_with_a_space_is_quoted(tmp_path):
 
     back = model_cif2df(df2cif(df, tmp_path / "out.cif"))
     assert back.loc[0, "RES_NAME"] == "A B"
+
+
+# ---------------------------------------------------------------------------
+# Readable by something other than this package
+# ---------------------------------------------------------------------------
+
+def test_what_is_written_is_readable_by_biotite(tmp_path):
+    """A format only its own author can read is worse than the one it replaces.
+
+    The round-trip tests above use this package's reader on this package's
+    writer, which cannot catch a missing column that every *other* reader
+    assumes. biotite raised `KeyError: 'pdbx_PDB_ins_code'` on the first
+    version of this writer, and prometheozyme reads these files through
+    biotite -- so the whole phase would have shipped a CIF the pipeline could
+    not load.
+    """
+    biotite_pdbx = pytest.importorskip("biotite.structure.io.pdbx")
+
+    source = _model_cif(tmp_path / "m.cif", SIMPLE)
+    written = df2cif(model_cif2df(source), tmp_path / "out.cif")
+
+    array = biotite_pdbx.get_structure(
+        biotite_pdbx.CIFFile.read(str(written)), model=1
+    )
+
+    assert array.array_length() == 3
+    assert [str(name) for name in array.atom_name] == ["N", "CA", "O1"]
+    assert [str(res) for res in array.res_name] == ["GLY", "GLY", "LIG"]
+    assert list(array.hetero) == [False, False, True]

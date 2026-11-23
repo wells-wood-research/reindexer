@@ -615,9 +615,15 @@ def df2cif(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as handle:
         handle.write(f"data_{block_name}\n#\nloop_\n")
+        # **The full set a reader expects, not the minimum this package uses.**
+        # biotite's `get_structure` raises `KeyError: 'pdbx_PDB_ins_code'` on a
+        # loop without it, and `label_alt_id`/`label_entity_id` are the same
+        # kind of assumed-present column. A file only this package can read
+        # would be a worse format than the PDB it replaces.
         for tag in (
-            "group_PDB", "id", "type_symbol", "label_atom_id", "label_comp_id",
-            "label_asym_id", "label_seq_id", "Cartn_x", "Cartn_y", "Cartn_z",
+            "group_PDB", "id", "type_symbol", "label_atom_id", "label_alt_id",
+            "label_comp_id", "label_asym_id", "label_entity_id", "label_seq_id",
+            "pdbx_PDB_ins_code", "Cartn_x", "Cartn_y", "Cartn_z",
             "occupancy", "B_iso_or_equiv", "auth_comp_id", "auth_asym_id",
             "auth_seq_id", "auth_atom_id", "pdbx_PDB_model_num",
         ):
@@ -630,8 +636,8 @@ def df2cif(
             seq = int(row["RES_ID"])
             handle.write(
                 f"{str(row['ATOM']).strip() or 'ATOM'} {serial} "
-                f"{_normalise_element(row['ELEMENT']) or '.'} {name} {comp} "
-                f"{asym} {seq} "
+                f"{_normalise_element(row['ELEMENT']) or '.'} {name} . {comp} "
+                f"{asym} ? {seq} ? "
                 f"{float(row['X']):.5f} {float(row['Y']):.5f} {float(row['Z']):.5f} "
                 f"{float(row['OCCUPANCY']):.2f} {float(row['BETAFACTOR']):.2f} "
                 f"{comp} {asym} {seq} {name} 1\n"

@@ -133,3 +133,69 @@ def test_optimisation_requires_all_orca_arguments(tmp_path):
             tmp_path / "missing_args.pdb",
             optimise=True,
         )
+
+
+def test_a_cif_output_is_converted_for_orca_and_written_back_as_cif(
+    tmp_path, monkeypatch
+):
+    """ORCA is handed a real PDB even when the caller asked for CIF out.
+
+    The failure this exists for, 23 November 2026. `optimise_reindexed_pdb`
+    staged its input by copying it to a name ending in `.pdb` and then told
+    ORCA to read it with `*pdbfile`. That was true while every caller worked
+    in PDB. Once prometheozyme began asking for `.cif` out, the staged file
+    held mmCIF under a `.pdb` name, and ORCA refused it:
+
+        [file orca_tools/Tool-Scanner/qcscancoord.cpp, line 1580]:
+        Error (Scan PDB): Aborting the run
+
+    The caller saw only "orca returned a nonzero status", after a backbone, a
+    sequence and six structure predictions had been paid for.
+
+    The same mistake ran in reverse at the end, where the labelled PDB was
+    copied byte for byte over a path ending in `.cif`, so the file a caller
+    read back was PDB under a CIF name.
+
+    This asserts both directions: what ORCA is given parses as a PDB, and
+    what the caller gets back is the format its own filename promises.
+    """
+    reference_path = FIXTURES / "palmitic_acid_reference.pdb"
+    target_path = FIXTURES / "palmitic_acid_target_02.pdb"
+    output_path = tmp_path / "palmitic_acid_reindexed.cif"
+
+    staged_seen = {}
+
+    def mock_run_orca(input_path, orcadir, timeout, logger=None):
+        staged = input_path.parent / "reindexed.pdb"
+        staged_seen["first_line"] = staged.read_text().splitlines()[0]
+        input_path.with_suffix(".out").write_text("mock ORCA stdout\n")
+        input_path.with_suffix(".err").write_text("")
+        _write_xyz_from_pdb(staged, input_path.parent / "opt.xyz")
+        return 0
+
+    monkeypatch.setattr("reindexer.optimization.orca.run_orca", mock_run_orca)
+
+    reindex(
+        reference_path,
+        target_path,
+        output_path,
+        optimise=True,
+        orcadir=tmp_path,
+        charge=0,
+        multiplicity=1,
+    )
+
+    # What ORCA was given: a PDB record, not a CIF data block. `_write_xyz_from_pdb`
+    # above reads it with `pdb2df`, so a CIF here would have failed already.
+    assert staged_seen["first_line"].startswith(("ATOM", "HETATM", "REMARK", "CRYST")), (
+        f"ORCA was staged a non-PDB first line: {staged_seen['first_line']!r}"
+    )
+
+    # What the caller got back: a CIF, because that is what it asked for.
+    assert output_path.read_text().startswith("data_"), (
+        "a caller that asked for .cif was handed something else"
+    )
+    from reindexer.io import model_cif2df
+
+    written = model_cif2df(output_path)
+    assert list(written["ATOM_NAME"]) == list(pdb2df(reference_path)["ATOM_NAME"])

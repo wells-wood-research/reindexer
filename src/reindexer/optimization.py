@@ -4,9 +4,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 import logging
-import shutil
 
 from . import orca
+from .io import df2pdb, read_structure, write_structure
 from .labelling import label_xyz_with_reference
 
 
@@ -79,7 +79,27 @@ def optimise_reindexed_pdb(
 
     artifacts = _artifacts(reindexed_path)
     artifacts.workdir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(reindexed_path, artifacts.staged_pdb)
+
+    # **Converted, not renamed.** ORCA is handed `*pdbfile`, so what is staged
+    # has to actually be one. This used to `shutil.copy2` the reindexed file
+    # into a `.pdb` name, which was true while everything upstream was PDB and
+    # stopped being true when callers began asking for `.cif` out: the staged
+    # file then held mmCIF under a `.pdb` extension and ORCA refused it with
+    #
+    #   [file orca_tools/Tool-Scanner/qcscancoord.cpp, line 1580]:
+    #   Error (Scan PDB): Aborting the run
+    #
+    # which surfaced only as "orca returned a nonzero status", after the
+    # caller had paid for everything upstream of it.
+    staged = read_structure(reindexed_path, logger=logger)
+    if staged is None or staged.empty:
+        raise HydrogenOptimizationError(
+            {
+                "reason": "reindexed structure contains no atom records",
+                "path": str(reindexed_path),
+            }
+        )
+    df2pdb(staged, artifacts.staged_pdb, logger=logger)
 
     orca.write_hydrogen_opt(
         artifacts.input_path,
@@ -131,5 +151,18 @@ def optimise_reindexed_pdb(
             }
         ) from exc
 
-    shutil.copy2(artifacts.labelled_pdb, reindexed_path)
+    # The mirror of the staging problem: `labelled_pdb` is a PDB artifact, and
+    # copying it byte for byte over `reindexed_path` put PDB content under
+    # whatever extension the caller asked for. Written through
+    # `write_structure` it lands in the format its own name promises, so a
+    # caller that asked for `.cif` can read back what it was given.
+    optimised = read_structure(artifacts.labelled_pdb, logger=logger)
+    if optimised is None or optimised.empty:
+        raise HydrogenOptimizationError(
+            {
+                "reason": "labelled structure contains no atom records",
+                "path": str(artifacts.labelled_pdb),
+            }
+        )
+    write_structure(optimised, reindexed_path, logger=logger)
     return artifacts
