@@ -1,11 +1,19 @@
 """NetworkX heavy-atom graph matching and ambiguity resolution."""
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable
 
 import networkx as nx
 import numpy as np
+
+LOG = logging.getLogger(__name__)
+
+#: How far a relabelled copy of the reference may sit from the reference itself and
+#: still count as the same structure. A true symmetry operation superimposes exactly;
+#: this is slack for coordinate round-tripping through a CIF, not for near-symmetry.
+SYMMETRY_RMSD_TOLERANCE = 0.05
 
 
 class GraphMismatchError(ValueError):
@@ -165,6 +173,34 @@ def _kabsch_rmsd(target: nx.Graph, reference: nx.Graph, mapping: dict[int, int])
     return float(np.sqrt(np.mean(np.sum((aligned - reference_centered) ** 2, axis=1))))
 
 
+def _permutation_is_reference_symmetry(reference: nx.Graph, permutation: dict[int, int]) -> float:
+    """RMSD between the reference and the same reference with its nodes relabelled.
+
+    A permutation that superimposes on the original is a symmetry operation of the
+    molecule: the atoms it exchanges are the same atom chemically and geometrically,
+    so a mapping that differs from another only by it names the same structure.
+    Formate is the case in point -- its two carboxylate oxygens carry no hydrogen and
+    sit at equal C-O distances, so no bond-length, angle or RMSD tie-breaker can tell
+    the two mappings apart, because there is nothing to tell apart.
+
+    Returned as an RMSD rather than a boolean so the caller can record how exact the
+    symmetry was.
+    """
+    nodes = sorted(permutation)
+    original = np.asarray([reference.nodes[node]["coords"] for node in nodes], dtype=float)
+    relabelled = np.asarray(
+        [reference.nodes[permutation[node]]["coords"] for node in nodes], dtype=float
+    )
+    original_centered = original - original.mean(axis=0)
+    relabelled_centered = relabelled - relabelled.mean(axis=0)
+    covariance = relabelled_centered.T @ original_centered
+    u, _, vt = np.linalg.svd(covariance)
+    correction = np.eye(3)
+    correction[-1, -1] = np.sign(np.linalg.det(u @ vt)) or 1.0
+    aligned = relabelled_centered @ (u @ correction @ vt)
+    return float(np.sqrt(np.mean(np.sum((aligned - original_centered) ** 2, axis=1))))
+
+
 def match_heavy_atoms(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: bool = False) -> MappingOutcome:
     """Match reference to target, optionally allowing target-only atoms."""
     reference = add_connectivity_signatures(reference)
@@ -214,5 +250,31 @@ def match_heavy_atoms(reference: nx.Graph, target: nx.Graph, *, allow_subgraph: 
     scores["global_rmsd_best"] = best_rmsd
     scores["global_rmsd_survivors"] = len(candidates)
     if len(candidates) != 1:
-        raise MappingAmbiguityError(candidates, scores)
+        # Every tie-breaker above is geometric, so candidates related by a symmetry
+        # operation of the reference survive all of them and always will: they
+        # describe the same structure under two equally correct namings. Picking the
+        # first is then a choice of label, not a guess about the structure, and it is
+        # made deterministically because `candidates` is sorted. A tie that is NOT a
+        # symmetry is still refused -- equal scores do not imply the relabelling
+        # superimposes, so this check is a real one.
+        chosen = candidates[0]
+        deviations = [
+            _permutation_is_reference_symmetry(
+                reference, {chosen[node]: candidate[node] for node in chosen}
+            )
+            for candidate in candidates[1:]
+        ]
+        worst = max(deviations) if deviations else 0.0
+        scores["symmetry_equivalent_candidates"] = len(candidates)
+        scores["symmetry_rmsd_worst"] = worst
+        if worst > SYMMETRY_RMSD_TOLERANCE:
+            raise MappingAmbiguityError(candidates, scores)
+        LOG.warning(
+            "%d heavy-atom mappings are tied and differ only by a symmetry of the "
+            "reference (worst relabelling RMSD %.4f A, tolerance %.2f A); taking the "
+            "first by sorted order. The atoms they exchange are the same atom "
+            "chemically, so either naming is correct.",
+            len(candidates), worst, SYMMETRY_RMSD_TOLERANCE,
+        )
+        return MappingOutcome(chosen, candidates, scores)
     return MappingOutcome(candidates[0], candidates, scores)
